@@ -186,6 +186,52 @@ const CHET_TIPS := [
 	"Generators puff smog. It drifts. Technically that's the neighbours' air now.",
 ]
 
+# Research tree: four branches, each a short chain you research in order. Researchers at desks
+# make research points. A node can unlock Build menu items and/or add a percentage bonus.
+# Bonus keys: structure_discount, rack_discount, rack_heat, rack_power, cooling, compute, productivity.
+const RESEARCH_BRANCHES := [
+	{"id": "construction", "name": "Construction"},
+	{"id": "equipment", "name": "Equipment"},
+	{"id": "chips", "name": "Computer Chips"},
+	{"id": "productivity", "name": "Productivity"},
+]
+const RESEARCH := [
+	{"id": "prefab", "branch": "construction", "name": "Prefab Walls", "cost": 20, "structure_discount": 0.25,
+		"desc": "Floors, walls and doors 25% cheaper. Some assembly required. All of it, actually."},
+	{"id": "roofs", "branch": "construction", "name": "Load-Bearing Roofs", "cost": 45, "unlocks": ["solar"],
+		"desc": "Unlocks rooftop Solar Panels. The roof was not, technically, load-bearing before."},
+	{"id": "insulation", "branch": "construction", "name": "Spray Foam Insulation", "cost": 90, "rack_heat": -0.2,
+		"desc": "Racks heat rooms 20% less."},
+	{"id": "modular", "branch": "construction", "name": "Modular Datacenters", "cost": 160, "rack_discount": 0.2,
+		"desc": "Server Racks 20% cheaper. Shipped flat-pack, with an allen key."},
+	{"id": "diesel", "branch": "equipment", "name": "Diesel Know-How", "cost": 20, "unlocks": ["gen_diesel"],
+		"desc": "Unlocks the Diesel Generator."},
+	{"id": "hvac", "branch": "equipment", "name": "Industrial HVAC", "cost": 45, "cooling": 0.25,
+		"desc": "All coolers 25% stronger."},
+	{"id": "lithium", "branch": "equipment", "name": "Lithium Supply Deal", "cost": 90, "unlocks": ["battery", "gen_large"],
+		"desc": "Unlocks Batteries and the Large Diesel."},
+	{"id": "turbines", "branch": "equipment", "name": "Trailer Turbines", "cost": 160, "unlocks": ["power_plant"],
+		"desc": "Unlocks the Portable Power Plant."},
+	{"id": "overclock", "branch": "chips", "name": "Overclocking", "cost": 20, "compute": 0.15,
+		"desc": "Racks make 15% more compute. Warranty void."},
+	{"id": "silicon", "branch": "chips", "name": "Custom Silicon", "cost": 45, "compute": 0.25,
+		"desc": "Racks make 25% more compute."},
+	{"id": "lowpower", "branch": "chips", "name": "Low-Power Chips", "cost": 90, "rack_power": -0.25, "rack_heat": -0.15,
+		"desc": "Racks use 25% less power and give off 15% less heat."},
+	{"id": "wafer", "branch": "chips", "name": "Wafer-Scale Chips", "cost": 160, "compute": 0.4,
+		"desc": "Racks make 40% more compute. One chip, the size of a pizza."},
+	{"id": "snacks", "branch": "productivity", "name": "Free Snacks", "cost": 20, "productivity": 0.1,
+		"desc": "Staff 10% more productive."},
+	{"id": "standups", "branch": "productivity", "name": "Daily Standups", "cost": 45, "productivity": 0.1,
+		"desc": "Staff 10% more productive, net of the standups."},
+	{"id": "hustle", "branch": "productivity", "name": "Hustle Culture", "cost": 90, "productivity": 0.15,
+		"desc": "Staff 15% more productive. Sleep pods are a perk."},
+	{"id": "pto", "branch": "productivity", "name": "Unlimited PTO", "cost": 160, "productivity": 0.15,
+		"desc": "Staff 15% more productive. Nobody takes it."},
+]
+const RESEARCH_BASE := 1.0  # research points a day the founders scrape together on their own
+const RESEARCH_PER_WORKER := 1.0  # extra points a day per researcher at a desk
+
 var floor_tiles := {}  # Vector2i -> "carpet" / "concrete"
 var wall_tiles := {}  # Vector2i -> "wall" / "door"
 var objects := {}  # Vector2i -> "desk" / "rack" / "ficus"
@@ -261,6 +307,7 @@ const MENUS := [
 	{"id": "heat", "name": "Heat", "key": KEY_H, "tab": 3},
 	{"id": "power", "name": "Power", "key": KEY_P, "tab": 4},
 	{"id": "deviation", "name": "Deviation", "key": KEY_V, "tab": 5},
+	{"id": "research", "name": "Research", "key": KEY_E, "tab": 7},
 	{"id": "guide", "name": "Guide", "key": KEY_G, "tab": 6},
 ]
 var models_label: Label
@@ -292,6 +339,12 @@ var power_stats := {}  # last step: demand, solar, grid, battery, gens (kW)
 var gen_output := {}  # Vector2i -> kW a generator made last step
 var smog := PackedFloat32Array()  # pollution per tile, GRID_W * GRID_H
 var smog_today := 0.0
+var research_done := {}  # research id -> true
+var research_active := ""  # what the research points go towards
+var research_points := 0.0  # banked, spent when the active node is paid off
+var research_label: Label
+var research_bar: ProgressBar
+var research_buttons := {}  # research id -> Button
 var modal: Control  # the open pop-up, if any; the game pauses under it
 var modal_button: Button
 var _speed_before_modal := 1
@@ -452,6 +505,7 @@ func _build_ui() -> void:
 	_build_power_tab()
 	_build_deviation_tab()
 	_build_guide_tab()
+	_build_research_tab()
 
 	cost_label = Label.new()
 	cost_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -472,6 +526,7 @@ const GUIDE := [
 	["Heat (H)", "Racks heat the room they're in. Hot racks throttle and hot staff slow down. An AC Unit on the room's roof cancels out about 4 racks; a Window AC on a wall handles about one. Bigger rooms heat up slower. Rooms are tinted by temperature while the Heat panel is open."],
 	["Power (P)", "Racks, ACs and red-team rigs use power. The cheapest power runs first: solar, then the grid, then batteries, then generators by fuel price. Batteries store spare solar for the night. The grid hookup is capped until you lobby for more. Generators go outside, and their smog drifts across the map."],
 	["Deviation (V)", "Every rack adds Deviation, and training, cutting corners and smarter models raise the rate. Alignment researchers at desks and Red-Team Rigs bring it back down (rigs eat compute). At 25% the AI gets quirky, at 50% it sabotages rivals for you and scandals follow, at 75% it hides compute, lies on reports and staff quit. At 100% it takes over."],
+	["Research (E)", "Researchers at desks make research points; the founders make a trickle on their own. Pick a project in each of four branches: Construction, Equipment, Computer Chips and Productivity. Each branch is researched in order. Projects unlock new things in Build or give a lasting bonus. Points keep banking while nothing is picked."],
 	["Speed", "Space pauses. The buttons top right run time at 1x, 2x or 4x. A quarter lasts 15 minutes at 1x. N mutes the music."],
 ]
 
@@ -493,6 +548,132 @@ func _build_guide_tab() -> void:
 		col.add_child(h)
 		var body := _wrap_label(col)
 		body.text = section[1] + "\n"
+
+
+func _build_research_tab() -> void:
+	var box := _tab_box("Research")
+	research_label = _wrap_label(box)
+	research_bar = ProgressBar.new()
+	research_bar.custom_minimum_size.y = 16
+	research_bar.show_percentage = false
+	box.add_child(research_bar)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(300, 400)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	box.add_child(scroll)
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(col)
+	for br in RESEARCH_BRANCHES:
+		var h := Label.new()
+		h.text = br.name
+		h.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5))
+		col.add_child(h)
+		for r in RESEARCH:
+			if r.branch != br.id:
+				continue
+			var b := Button.new()
+			b.toggle_mode = true
+			b.focus_mode = Control.FOCUS_NONE
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			b.add_theme_font_size_override("font_size", 14)
+			b.tooltip_text = r.desc
+			b.pressed.connect(_pick_research.bind(r.id))
+			col.add_child(b)
+			research_buttons[r.id] = b
+
+
+func _update_research_tab() -> void:
+	var active := _research_by_id(research_active)
+	if active.is_empty():
+		research_label.text = "Research: +%.1f points a day\nBanked: %d\nNothing picked" % [_research_per_day(), int(research_points)]
+		research_bar.value = 0
+	else:
+		research_label.text = "Research: +%.1f points a day\n%s: %d / %d" % [
+			_research_per_day(), active.name, mini(int(research_points), active.cost), active.cost]
+		research_bar.value = 100.0 * minf(research_points / active.cost, 1.0)
+	for r in RESEARCH:
+		var b: Button = research_buttons[r.id]
+		if research_done.has(r.id):
+			b.text = "   %s   done" % r.name
+		else:
+			b.text = "   %s   %d pts" % [r.name, r.cost]
+		b.disabled = research_done.has(r.id) or not _research_open(r)
+		b.button_pressed = r.id == research_active
+
+
+func _research_by_id(id: String) -> Dictionary:
+	for r in RESEARCH:
+		if r.id == id:
+			return r
+	return {}
+
+
+# A node opens once the one before it in its branch is done.
+func _research_open(r: Dictionary) -> bool:
+	var prev := {}
+	for x in RESEARCH:
+		if x.id == r.id:
+			break
+		if x.branch == r.branch:
+			prev = x
+	return prev.is_empty() or research_done.has(prev.id)
+
+
+func _pick_research(id: String) -> void:
+	var r := _research_by_id(id)
+	if research_done.has(id) or not _research_open(r):
+		return
+	research_active = "" if research_active == id else id
+	_update_research_tab()
+
+
+func _research_per_day() -> float:
+	return RESEARCH_BASE + RESEARCH_PER_WORKER * _workforce("research")
+
+
+func _tick_research() -> void:
+	research_points += _research_per_day()
+	var r := _research_by_id(research_active)
+	if r.is_empty() or research_points < r.cost:
+		return
+	research_points -= r.cost
+	research_done[r.id] = true
+	research_active = ""
+	for x in RESEARCH:  # carry on down the same branch
+		if x.branch == r.branch and not research_done.has(x.id) and _research_open(x):
+			research_active = x.id
+			break
+	var keep := tool_index
+	_label_tools()
+	if _level_tools().has(keep):
+		_select_tool(keep)
+	_chet("Research done: %s. %s" % [r.name, r.desc])
+
+
+# Sum of one bonus over every finished research node, e.g. 0.4 for +40%.
+func _research_bonus(key: String) -> float:
+	var v := 0.0
+	for r in RESEARCH:
+		if research_done.has(r.id):
+			v += r.get(key, 0.0)
+	return v
+
+
+func _locked(tool_id: String) -> bool:
+	for r in RESEARCH:
+		if not research_done.has(r.id) and tool_id in r.get("unlocks", []):
+			return true
+	return false
+
+
+func _tool_cost(tool: Dictionary) -> int:
+	var mult := 1.0
+	if tool.get("cat", "") == "structure":
+		mult -= _research_bonus("structure_discount")
+	if tool.id == "rack":
+		mult -= _research_bonus("rack_discount")
+	return roundi(tool.cost * mult)
 
 
 func _tab_box(title: String) -> VBoxContainer:
@@ -839,7 +1020,7 @@ func _level_tools() -> Array:
 	for i in TOOLS.size():
 		if TOOLS[i].id == "demolish":
 			continue
-		if TOOLS[i].cat == build_cat:
+		if TOOLS[i].cat == build_cat and not _locked(TOOLS[i].id):
 			out.append(i)
 	out.append(TOOLS.size() - 1)
 	return out
@@ -863,7 +1044,7 @@ func _label_tools() -> void:
 	for i in TOOLS.size():
 		var tool: Dictionary = TOOLS[i]
 		var key := "X" if tool.id == "demolish" else str(shown.find(i) + 1)
-		tool_buttons[i].text = "%s  %s" % [key, tool.name] if tool.cost == 0 else "%s  %s  %s" % [key, tool.name, _money(tool.cost)]
+		tool_buttons[i].text = "%s  %s" % [key, tool.name] if tool.cost == 0 else "%s  %s  %s" % [key, tool.name, _money(_tool_cost(tool))]
 		tool_buttons[i].visible = shown.has(i)
 	_select_tool(shown[0])
 
@@ -918,6 +1099,7 @@ func _update_hud() -> void:
 	_update_heat_tab()
 	_update_deviation_tab()
 	_update_power_tab()
+	_update_research_tab()
 
 
 func _num(v: int) -> String:
@@ -1147,7 +1329,7 @@ func _commit(tiles: Array) -> void:
 			_demolish(t)
 		_after_build()
 		return
-	var cost: int = tool.cost * valid.size()
+	var cost: int = _tool_cost(tool) * valid.size()
 	if cost > money:
 		_chet("Bro, that's %s and we have %s. Maybe pitch some VCs first?" % [_money(cost), _money(money)])
 		return
@@ -1208,6 +1390,7 @@ func _new_day() -> void:
 	_power_cost = 0.0
 	money -= _payroll() + power_bill
 	_tick_training()
+	_tick_research()
 	_tick_users()
 	_tick_rivals()
 	_tick_deviation()
@@ -1241,7 +1424,8 @@ func _rack_compute() -> float:
 
 
 func _rack_output(t: Vector2i) -> float:
-	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * power_ratio
+	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * power_ratio \
+		* (1.0 + _research_bonus("compute"))
 
 
 # Compute is spent in this order: red-team rigs, then whatever the AI hides at 75%, then training.
@@ -1576,7 +1760,7 @@ func _workforce(job: String) -> float:
 	for s in staff:
 		if s.working and s.job == job:
 			n += (1.0 if s.role == JOBS[job].role else 0.5) * s.productivity
-	return n
+	return n * (1.0 + _research_bonus("productivity"))
 
 
 # Where someone stands to use a desk or rack: a free walkable neighbor, front side first.
@@ -1641,7 +1825,7 @@ func _update_staff(delta: float) -> void:
 # --- Power and pollution ----------------------------------------------------
 
 func _power_demand() -> float:
-	var kw := _racks() * RACK_KW
+	var kw := _racks() * RACK_KW * (1.0 + _research_bonus("rack_power"))
 	for c in _coolers():
 		var t: Vector2i = c[0]
 		if COOLERS.has(c[1]):
@@ -1761,11 +1945,11 @@ func _tick_heat() -> void:
 	added.fill(0.0)
 	for t in objects:
 		if objects[t] == "rack" and room_of.has(t):
-			added[room_of[t]] += RACK_HEAT * power_ratio
+			added[room_of[t]] += RACK_HEAT * power_ratio * (1.0 + _research_bonus("rack_heat"))
 	for c in _coolers():
 		var t: Vector2i = c[0]
 		if COOLERS.has(c[1]) and room_of.has(t):
-			added[room_of[t]] -= COOLERS[c[1]].cooling * power_ratio
+			added[room_of[t]] -= COOLERS[c[1]].cooling * power_ratio * (1.0 + _research_bonus("cooling"))
 	for i in buildings.size():
 		var bld: Dictionary = buildings[i]
 		var v: float = bld.temp + added[i] / maxi(bld.area, 1)
@@ -1965,8 +2149,8 @@ func _update_cost_label() -> void:
 		cost_label.visible = false
 		return
 	var n := _drag_tiles().filter(func(t): return _can_place(tool.id, t)).size()
-	cost_label.text = _money(n * tool.cost)
-	cost_label.add_theme_color_override("font_color", Color(1, 0.4, 0.4) if n * tool.cost > money else Color.WHITE)
+	cost_label.text = _money(n * _tool_cost(tool))
+	cost_label.add_theme_color_override("font_color", Color(1, 0.4, 0.4) if n * _tool_cost(tool) > money else Color.WHITE)
 	cost_label.position = get_viewport().get_mouse_position() + Vector2(18, 10)
 	cost_label.visible = true
 
