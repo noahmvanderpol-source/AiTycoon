@@ -5,6 +5,10 @@ config_version=5
 config/name="AITycoon"
 run/main_scene="res://scenes/main.tscn"
 
+[autoload]
+
+Music="*res://scripts/music.gd"
+
 [display]
 window/size/viewport_width=1280
 window/size/viewport_height=720
