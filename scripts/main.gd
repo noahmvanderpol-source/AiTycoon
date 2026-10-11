@@ -123,6 +123,7 @@ var drag_start := Vector2i.ZERO
 var paint_tiles := {}
 var panning := false
 
+var buildings := []  # [{tiles: {Vector2i: true}, alpha}] each enclosed room gets a roof
 var staff := []  # [{name, role, job, salary, pos, path, wait, seat, spot, working, label}]
 var astar := AStarGrid2D.new()
 var rng := RandomNumberGenerator.new()
@@ -163,6 +164,7 @@ func _ready() -> void:
 	astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	astar.update()
 	_refresh_walkable()
+	_find_buildings()
 	_add_staff("researcher", _tile_center(Vector2i(27, 22)), FOUNDER_SALARY)
 	_add_staff("engineer", _tile_center(Vector2i(28, 22)), FOUNDER_SALARY)
 
@@ -559,6 +561,8 @@ func _process(delta: float) -> void:
 	if paint_tiles.size() > 0 and dragging and _in_bounds(hover):
 		paint_tiles[_cursor()] = true
 	_update_staff(delta * maxf(speed, 0.0))
+	for bld in buildings:  # roofs fade out while the mouse is inside the building
+		bld.alpha = move_toward(bld.alpha, 0.0 if bld.tiles.has(hover) else 1.0, delta * 5.0)
 	_update_hud()
 	_update_cost_label()
 	queue_redraw()
@@ -945,6 +949,7 @@ func _refresh_walkable() -> void:
 
 func _after_build() -> void:
 	_refresh_walkable()
+	_find_buildings()
 	for s in staff:
 		s.path = PackedVector2Array()
 		s.working = false
@@ -1067,6 +1072,86 @@ func _update_staff(delta: float) -> void:
 			s.path.remove_at(0)
 
 
+# --- Roofs ------------------------------------------------------------------
+
+func _find_buildings() -> void:
+	# Anything the outside can't reach without crossing a wall or door is indoors.
+	var outside := {}
+	var stack := []
+	for x in GRID_W:
+		stack.append(Vector2i(x, 0))
+		stack.append(Vector2i(x, GRID_H - 1))
+	for y in GRID_H:
+		stack.append(Vector2i(0, y))
+		stack.append(Vector2i(GRID_W - 1, y))
+	while not stack.is_empty():
+		var t: Vector2i = stack.pop_back()
+		if not _in_bounds(t) or outside.has(t) or wall_tiles.has(t):
+			continue
+		outside[t] = true
+		for d in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+			stack.append(t + d)
+
+	# Each connected indoor area plus the walls around it is one roof.
+	var old := buildings
+	buildings = []
+	var seen := {}
+	for x in GRID_W:
+		for y in GRID_H:
+			var start := Vector2i(x, y)
+			if seen.has(start) or outside.has(start) or wall_tiles.has(start):
+				continue
+			var tiles := {}
+			stack = [start]
+			while not stack.is_empty():
+				var t: Vector2i = stack.pop_back()
+				if seen.has(t) or outside.has(t) or not _in_bounds(t):
+					continue
+				if wall_tiles.has(t):
+					tiles[t] = true
+					continue
+				seen[t] = true
+				tiles[t] = true
+				for dx in [-1, 0, 1]:
+					for dy in [-1, 0, 1]:
+						var n: Vector2i = t + Vector2i(dx, dy)
+						if wall_tiles.has(n):
+							tiles[n] = true
+						elif dx == 0 or dy == 0:
+							stack.append(n)
+			var alpha := 1.0
+			for o in old:  # keep the fade state of a building that already existed
+				if o.tiles.has(start):
+					alpha = o.alpha
+			buildings.append({"tiles": tiles, "alpha": alpha})
+
+
+func _draw_roof(bld: Dictionary) -> void:
+	if bld.alpha <= 0.01:
+		return
+	var a: float = bld.alpha
+	var lift := Vector2(0, WALL_H)  # the roof sits on top of the walls
+	var fill := Color(0.56, 0.5, 0.45, a)
+	var edge := Color(0.32, 0.28, 0.26, a)
+	var sum := Vector2.ZERO
+	for t in bld.tiles:
+		var p := Vector2(t) * TILE - lift
+		draw_rect(Rect2(p, Vector2(TILE, TILE)), fill.lightened(0.04) if (t.x + t.y) % 2 == 0 else fill)
+		sum += Vector2(t)
+	for t in bld.tiles:
+		var p := Vector2(t) * TILE - lift
+		if not bld.tiles.has(t + Vector2i.UP): draw_line(p, p + Vector2(TILE, 0), edge, 3.0)
+		if not bld.tiles.has(t + Vector2i.LEFT): draw_line(p, p + Vector2(0, TILE), edge, 3.0)
+		if not bld.tiles.has(t + Vector2i.RIGHT): draw_line(p + Vector2(TILE, 0), p + Vector2(TILE, TILE), edge, 3.0)
+		if not bld.tiles.has(t + Vector2i.DOWN):
+			draw_line(p + Vector2(0, TILE), p + Vector2(TILE, TILE), edge, 3.0)
+			draw_rect(Rect2(p + Vector2(0, TILE), Vector2(TILE, WALL_H)), Color(0.3, 0.29, 0.32, a))  # wall front below the eaves
+	# A rooftop AC unit, because it's Calizona.
+	var c: Vector2 = (sum / bld.tiles.size() + Vector2(0.5, 0.5)) * TILE - lift
+	draw_rect(Rect2(c - Vector2(14, 10), Vector2(28, 20)), Color(0.75, 0.75, 0.72, a))
+	draw_circle(c, 7, Color(0.35, 0.35, 0.38, a))
+
+
 # --- Drawing ----------------------------------------------------------------
 
 func _hash(t: Vector2i, salt := 0) -> int:
@@ -1140,6 +1225,8 @@ func _draw() -> void:
 				_draw_door(item)
 			else:
 				call("_draw_" + objects[item], Vector2(item) * TILE, item)
+	for bld in buildings:
+		_draw_roof(bld)
 	_draw_preview()
 
 
