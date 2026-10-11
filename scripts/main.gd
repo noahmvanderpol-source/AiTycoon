@@ -1,6 +1,6 @@
 extends Node2D
 ## Starter map: a small pre-built office in the Calizona desert, plus a handful of
-## construction tools (Prison Architect style: you build, staff wander around).
+## construction tools (Prison Architect style: you build and assign jobs, staff do the rest).
 ## Server racks give compute, compute trains models, and models win users, who pay.
 
 const TILE := 32
@@ -11,7 +11,9 @@ const GRID_H := 48
 const PAN_SPEED := 700.0
 const SECONDS_PER_DAY := 900.0 / 91.0  # 15 real minutes per quarter at 1x
 const START_YEAR := 2027
-const SALARY_PER_DAY := 1200
+const FOUNDER_SALARY := 1200  # the founders took equity instead (the fools)
+const RECRUITER_FEE := 5000
+const SEVERANCE_DAYS := 5
 const RACK_POWER_PER_DAY := 400
 const REVENUE_PER_USER := 0.05  # dollars per user per day
 const WIN_CAPABILITY := 100
@@ -22,6 +24,24 @@ const MODEL_SIZES := [
 	{"name": "Medium", "suffix": "Pro", "cost": 400_000, "work": 150.0, "gain": 16},
 	{"name": "Large", "suffix": "Ultra", "cost": 1_500_000, "work": 500.0, "gain": 32},
 ]
+
+# Who you can hire. A role decides salary and shirt; it does its matching job at full speed.
+const ROLES := {
+	"researcher": {"name": "Researcher", "salary": 1800, "shirt": Color(0.3, 0.5, 0.9)},
+	"engineer": {"name": "Engineer", "salary": 1400, "shirt": Color(0.95, 0.6, 0.2)},
+	"marketer": {"name": "Marketer", "salary": 1000, "shirt": Color(0.9, 0.4, 0.7)},
+}
+# Jobs you assign. at: what the job needs to work at. Anyone can do any job, at half speed off-role.
+const JOBS := {
+	"research": {"name": "Research", "at": "desk", "role": "researcher"},
+	"engineering": {"name": "Engineering", "at": "rack", "role": "engineer"},
+	"growth": {"name": "Growth", "at": "desk", "role": "marketer"},
+	"none": {"name": "Slack off", "at": "", "role": ""},
+}
+const JOB_ORDER := ["research", "engineering", "growth", "none"]
+const FIRST_NAMES := ["Brayden", "Priya", "Skyler", "Dmitri", "Kai", "Megan", "Tobias", "Aiko", "Jaxon",
+	"Fatima", "Chad", "Lena", "Rohan", "Sienna", "Mateo", "Zoe", "Gunnar", "Imani", "Theo", "Wren"]
+const NO_SEAT := Vector2i(-1, -1)
 
 # Rival labs follow a script: [day, lab, model, capability].
 const RIVAL_RELEASES := [
@@ -59,6 +79,8 @@ const CHET_TIPS := [
 	"Ficus plants boost morale by 0%. Investors love them though.",
 	"Revenue? We're pre-revenue. That's a vibe, not a problem.",
 	"More Server Racks means more compute means faster training. It's literally just math, bro.",
+	"Researchers at desks train models faster. Engineers babysit racks for extra compute. Marketers at desks get users.",
+	"Assign jobs in the Staff tab. You don't tell people what to do, you tell them what their job is. Leadership.",
 	"Users are revenue. Revenue is users. I learned that at Stanford. Well, near Stanford.",
 	"Right-click demolishes stuff. Like the old office culture. Disrupted.",
 	"Every door is an open door policy if you think about it.",
@@ -87,7 +109,7 @@ var drag_start := Vector2i.ZERO
 var paint_tiles := {}
 var panning := false
 
-var staff := []  # [{pos, path, wait, shirt}]
+var staff := []  # [{name, role, job, salary, pos, path, wait, seat, spot, working, label}]
 var astar := AStarGrid2D.new()
 var rng := RandomNumberGenerator.new()
 var _day_timer := 0.0
@@ -107,6 +129,8 @@ var models_label: Label
 var train_label: Label
 var train_bar: ProgressBar
 var train_buttons := []
+var staff_label: Label
+var staff_list: VBoxContainer
 var modal: Control  # the open pop-up, if any; the game pauses under it
 var modal_button: Button
 var _speed_before_modal := 1
@@ -121,8 +145,8 @@ func _ready() -> void:
 	astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	astar.update()
 	_refresh_walkable()
-	for shirt in [Color(0.85, 0.35, 0.3), Color(0.3, 0.65, 0.45)]:
-		staff.append({"pos": _tile_center(Vector2i(27, 22)), "path": PackedVector2Array(), "wait": rng.randf_range(0.5, 2.0), "shirt": shirt})
+	_add_staff("researcher", _tile_center(Vector2i(27, 22)), FOUNDER_SALARY)
+	_add_staff("engineer", _tile_center(Vector2i(28, 22)), FOUNDER_SALARY)
 
 	camera = Camera2D.new()
 	camera.position = _tile_center(Vector2i(33, 22))
@@ -223,6 +247,7 @@ func _build_ui() -> void:
 	tabs.focus_mode = Control.FOCUS_NONE
 	side.add_child(tabs)
 	_build_models_tab()
+	_build_staff_tab()
 
 	cost_label = Label.new()
 	cost_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -269,22 +294,92 @@ func _build_models_tab() -> void:
 
 func _update_models_tab() -> void:
 	var best := "none yet" if models.is_empty() else "%s (capability %d)" % [models.back().name, models.back().cap]
-	models_label.text = "Best model: %s\nUsers: %s\nRevenue: %s/day\nCompute: %d racks, %.1f per day\nTop rival: %s %s (capability %d)" % [
-		best, _num(int(users)), _money(revenue_today), _racks(), _compute_per_day(), rival[1], rival[2], rival[3]]
+	models_label.text = "Best model: %s\nUsers: %s\nRevenue: %s/day\nCompute: %d racks, %.1f per day\nTraining speed: %.1f per day\nTop rival: %s %s (capability %d)" % [
+		best, _num(int(users)), _money(revenue_today), _racks(), _compute_per_day(), _training_speed(), rival[1], rival[2], rival[3]]
 	var compute := _compute_per_day()
 	if training.is_empty():
 		train_label.text = "Nothing training. Pick a size:" if _racks() > 0 else "Build a Server Rack to train models."
 		train_bar.visible = false
 	else:
-		var days_left := "?" if compute <= 0.0 else str(ceili((training.work - training.done) / compute))
+		var days_left := "?" if compute <= 0.0 else str(ceili((training.work - training.done) / _training_speed()))
 		train_label.text = "Training %s (capability %d), %s days left" % [training.name, training.cap, days_left]
 		train_bar.visible = true
 		train_bar.value = 100.0 * training.done / training.work
 	for i in MODEL_SIZES.size():
 		var size: Dictionary = MODEL_SIZES[i]
-		var days := "?" if compute <= 0.0 else str(ceili(_train_work(i) / compute))
+		var days := "?" if compute <= 0.0 else str(ceili(_train_work(i) / _training_speed()))
 		train_buttons[i].text = "Train %s   %s   ~%s days   +%d" % [size.name, _money(_train_cost(i)), days, size.gain]
 		train_buttons[i].disabled = not training.is_empty() or _train_cost(i) > money or _racks() == 0
+
+
+func _build_staff_tab() -> void:
+	var box := _tab_box("Staff")
+	staff_label = _wrap_label(box)
+	for role in ROLES:
+		var b := Button.new()
+		b.text = "Hire %s   %s/day" % [ROLES[role].name, _money(ROLES[role].salary)]
+		b.focus_mode = Control.FOCUS_NONE
+		b.add_theme_font_size_override("font_size", 14)
+		b.pressed.connect(_hire.bind(role))
+		box.add_child(b)
+	box.add_child(HSeparator.new())
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size.y = 250
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	box.add_child(scroll)
+	staff_list = VBoxContainer.new()
+	staff_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(staff_list)
+	_rebuild_staff_list()
+
+
+func _rebuild_staff_list() -> void:
+	for c in staff_list.get_children():
+		c.queue_free()
+	for s in staff:
+		var row := HBoxContainer.new()
+		staff_list.add_child(row)
+		var dot := ColorRect.new()
+		dot.color = ROLES[s.role].shirt
+		dot.custom_minimum_size = Vector2(8, 30)
+		row.add_child(dot)
+		var l := Label.new()
+		l.add_theme_font_size_override("font_size", 12)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		l.clip_text = true
+		row.add_child(l)
+		s.label = l
+		var opt := OptionButton.new()
+		opt.focus_mode = Control.FOCUS_NONE
+		opt.add_theme_font_size_override("font_size", 12)
+		for j in JOB_ORDER:
+			opt.add_item(JOBS[j].name)
+		opt.selected = JOB_ORDER.find(s.job)
+		opt.item_selected.connect(_set_job.bind(s))
+		row.add_child(opt)
+		var fire := Button.new()
+		fire.text = "Fire"
+		fire.focus_mode = Control.FOCUS_NONE
+		fire.add_theme_font_size_override("font_size", 12)
+		fire.tooltip_text = "Severance: %d days of salary" % SEVERANCE_DAYS
+		fire.pressed.connect(_fire.bind(s))
+		row.add_child(fire)
+
+
+func _update_staff_tab() -> void:
+	var payroll := 0
+	for s in staff:
+		payroll += s.salary
+		var status := "Slacking off"
+		if s.working:
+			status = "Working"
+		elif s.seat != NO_SEAT:
+			status = "Heading to work"
+		elif JOBS[s.job].at != "":
+			status = "Needs a free %s" % ("desk" if JOBS[s.job].at == "desk" else "server rack")
+		s.label.text = "%s, %s\n%s" % [s.name, ROLES[s.role].name, status]
+	staff_label.text = "%d staff, payroll %s/day\nWorking now: Research %.1f, Engineering %.1f, Growth %.1f" % [
+		staff.size(), _money(payroll), _workforce("research"), _workforce("engineering"), _workforce("growth")]
 
 
 # A centered pop-up that pauses the game until its button is pressed.
@@ -369,6 +464,7 @@ func _update_hud() -> void:
 	top_label.text = "%s, Calizona     %s     Burn %s/day     %s     Users %s     Q%d %d, Day %d" % [
 		company, _money(money), _money(burn), revenue, _num(int(users)), q % 4 + 1, START_YEAR + q / 4, (day - 1) % 91 + 1]
 	_update_models_tab()
+	_update_staff_tab()
 
 
 func _num(v: int) -> String:
@@ -596,7 +692,10 @@ func _demolish(t: Vector2i) -> void:
 
 
 func _daily_burn() -> int:
-	return staff.size() * SALARY_PER_DAY + _racks() * RACK_POWER_PER_DAY
+	var payroll := 0
+	for s in staff:
+		payroll += s.salary
+	return payroll + _racks() * RACK_POWER_PER_DAY
 
 
 # --- Models, users and rivals ------------------------------------------------
@@ -617,8 +716,14 @@ func _racks() -> int:
 	return n
 
 
+# Each engineer tending a rack adds half a rack's worth of compute.
 func _compute_per_day() -> float:
-	return float(_racks())
+	return _racks() + 0.5 * _workforce("engineering")
+
+
+# Researchers make every unit of compute count for more.
+func _training_speed() -> float:
+	return _compute_per_day() * (1.0 + 0.25 * _workforce("research"))
 
 
 func _best_cap() -> int:
@@ -651,7 +756,7 @@ func _start_training(i: int) -> void:
 func _tick_training() -> void:
 	if training.is_empty():
 		return
-	training.done += _compute_per_day()
+	training.done += _training_speed()
 	if training.done < training.work:
 		return
 	models.append({"name": training.name, "cap": training.cap, "day": day})
@@ -665,8 +770,9 @@ func _user_target() -> float:
 	var cap := _best_cap()
 	if cap == 0:
 		return 0.0
-	# More capable models attract more users, and losing to the best rival costs share.
-	return 2500.0 * pow(cap, 1.5) * clampf(float(cap) / rival[3], 0.3, 1.5)
+	# More capable models attract more users, losing to the best rival costs share,
+	# and marketers find more people to sell to.
+	return 2500.0 * pow(cap, 1.5) * clampf(float(cap) / rival[3], 0.3, 1.5) * (1.0 + 0.2 * _workforce("growth"))
 
 
 func _tick_users() -> void:
@@ -700,6 +806,93 @@ func _after_build() -> void:
 	_refresh_walkable()
 	for s in staff:
 		s.path = PackedVector2Array()
+		s.working = false
+		# Lose the workstation if it was demolished or its spot got blocked.
+		if s.seat != NO_SEAT and (objects.get(s.seat) != JOBS[s.job].at or not _walkable(s.spot)):
+			s.seat = NO_SEAT
+
+
+func _add_staff(role: String, pos: Vector2, salary: int) -> void:
+	var taken := staff.map(func(s): return s.name)
+	var name := ""
+	for i in 20:
+		name = "%s %s." % [FIRST_NAMES[rng.randi() % FIRST_NAMES.size()], char(65 + rng.randi() % 26)]
+		if not taken.has(name):
+			break
+	var job := ""
+	for j in JOBS:
+		if JOBS[j].role == role:
+			job = j
+	staff.append({"name": name, "role": role, "job": job, "salary": salary, "pos": pos,
+		"path": PackedVector2Array(), "wait": rng.randf_range(0.5, 2.0), "seat": NO_SEAT,
+		"spot": NO_SEAT, "working": false, "label": null})
+
+
+func _hire(role: String) -> void:
+	if money < RECRUITER_FEE:
+		_chet("We can't even afford the recruiter, bro. Ramen budget.")
+		return
+	money -= RECRUITER_FEE
+	var door := Vector2i(30, 30)
+	var spots := floor_tiles.keys().filter(_walkable)
+	var at: Vector2i = door if _walkable(door) or spots.is_empty() else spots[rng.randi() % spots.size()]
+	_add_staff(role, _tile_center(at), ROLES[role].salary)
+	_rebuild_staff_list()
+	_chet(["Got us a researcher. PhD in something. Didn't read the thesis. Vibes were right.",
+		"New engineer. Says she can make the racks go brrr. I believe her.",
+		"Hired a marketer. He's already called our model 'basically sentient'. Legally risky, emotionally correct."][ROLES.keys().find(role)])
+
+
+func _fire(s: Dictionary) -> void:
+	money -= s.salary * SEVERANCE_DAYS
+	staff.erase(s)
+	_rebuild_staff_list()
+	_chet("%s has been offboarded. I told them it's not a layoff, it's a 'talent release'." % s.name)
+
+
+func _set_job(index: int, s: Dictionary) -> void:
+	s.job = JOB_ORDER[index]
+	s.seat = NO_SEAT
+	s.working = false
+	s.path = PackedVector2Array()
+	s.wait = 0.0
+
+
+# How much work a job is getting right now: one per person at their station, half if off-role.
+func _workforce(job: String) -> float:
+	var n := 0.0
+	for s in staff:
+		if s.working and s.job == job:
+			n += 1.0 if s.role == JOBS[job].role else 0.5
+	return n
+
+
+# Where someone stands to use a desk or rack: a free walkable neighbor, front side first.
+func _station_spot(t: Vector2i, kind: String) -> Vector2i:
+	var sides := [Vector2i.UP, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.DOWN] if kind == "desk" \
+		else [Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP]
+	for d in sides:
+		var spot: Vector2i = t + d
+		if _walkable(spot) and not staff.any(func(o): return o.spot == spot and o.seat != NO_SEAT):
+			return spot
+	return NO_SEAT
+
+
+func _find_station(s: Dictionary, here: Vector2i) -> void:
+	var kind: String = JOBS[s.job].at
+	var best_len := 1 << 30
+	for t in objects:
+		if objects[t] != kind or staff.any(func(o): return o.seat == t):
+			continue
+		var spot := _station_spot(t, kind)
+		if spot == NO_SEAT:
+			continue
+		var path := astar.get_id_path(here, spot)
+		if (path.is_empty() and here != spot) or path.size() >= best_len:
+			continue
+		best_len = path.size()
+		s.seat = t
+		s.spot = spot
 
 
 func _update_staff(delta: float) -> void:
@@ -710,10 +903,22 @@ func _update_staff(delta: float) -> void:
 			s.pos = _tile_center(spots[rng.randi() % spots.size()])  # got walled in; nudge them out
 			continue
 		if s.path.is_empty():
+			if s.seat != NO_SEAT and here == s.spot:
+				s.working = true
+				continue
+			s.working = false
 			s.wait -= delta
-			if s.wait <= 0.0 and not spots.is_empty():
+			if s.wait > 0.0:
+				continue
+			s.wait = rng.randf_range(1.0, 4.0)
+			if JOBS[s.job].at != "" and s.seat == NO_SEAT:
+				_find_station(s, here)
+			if s.seat != NO_SEAT:
+				s.path = astar.get_point_path(here, s.spot)
+				if s.path.is_empty():
+					s.seat = NO_SEAT
+			elif not spots.is_empty():
 				s.path = astar.get_point_path(here, spots[rng.randi() % spots.size()])
-				s.wait = rng.randf_range(1.0, 4.0)
 			continue
 		var target: Vector2 = s.path[0]
 		s.pos = s.pos.move_toward(target, 60.0 * delta)
@@ -787,7 +992,7 @@ func _draw() -> void:
 			if item is Dictionary and item.has("sub"):
 				call("_draw_" + sub_objects[item.sub], Vector2(item.sub) * SUB)
 			elif item is Dictionary:
-				_draw_person(item.pos, item.shirt)
+				_draw_staff(item)
 			elif wall_tiles.get(item) == "wall":
 				_draw_wall(item)
 			elif wall_tiles.has(item):
@@ -898,6 +1103,20 @@ func _draw_coffee(p: Vector2) -> void:
 	_box(Rect2(p + Vector2(3, 4), Vector2(10, 10)), 8, Color(0.2, 0.2, 0.22), Color(0.12, 0.12, 0.13))
 	draw_rect(Rect2(p + Vector2(5, 7), Vector2(6, 4)), Color(0.35, 0.22, 0.12))  # the pot
 	draw_rect(Rect2(p + Vector2(10, -3), Vector2(2, 2)), Color(1, 0.25, 0.2) if int(_time * 2) % 2 == 0 else Color(0.4, 0.1, 0.1))
+
+
+func _draw_staff(s: Dictionary) -> void:
+	var at_desk: bool = s.working and objects.get(s.seat) == "desk"
+	# At a desk they sit down behind it, so the desk (drawn after) hides their legs.
+	var pos: Vector2 = s.pos + (Vector2(0, 10) if at_desk else Vector2.ZERO)
+	_draw_person(pos, ROLES[s.role].shirt)
+	if s.working:
+		# A little "busy" bubble with dots that tick along.
+		var c := pos + Vector2(10, -38)
+		draw_rect(Rect2(c, Vector2(16, 9)), Color(1, 1, 1, 0.9))
+		var n := int(_time * 3.0 + s.pos.x) % 4
+		for i in mini(n, 3):
+			draw_rect(Rect2(c + Vector2(3 + i * 4, 4), Vector2(2, 2)), Color(0.15, 0.15, 0.2))
 
 
 func _draw_person(pos: Vector2, shirt: Color) -> void:
