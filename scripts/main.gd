@@ -161,6 +161,7 @@ const BUILD_CATS := [
 ]
 
 # Every buildable thing. layer: which map layer it lives on. drag: how the mouse places it.
+# access: staff must be able to walk up to one side of it from a door, or it won't work.
 # Things on the "sub" layer take one subgrid cell (a quarter tile) and don't block walking.
 const TOOLS := [
 	{"id": "gravel", "name": "Gravel", "layer": "floor", "cost": 50, "drag": "fill", "cat": "structure"},  # cheapest to best
@@ -172,8 +173,8 @@ const TOOLS := [
 	{"id": "wall_insulated", "name": "Insulated Wall", "layer": "wall", "cost": 3000, "drag": "outline", "cat": "structure"},
 	{"id": "iwall", "name": "Interior Wall", "layer": "sub", "cost": 300, "drag": "paint", "cat": "structure"},
 	{"id": "door", "name": "Door", "layer": "wall", "cost": 2500, "drag": "single", "cat": "structure"},
-	{"id": "desk", "name": "Desk", "layer": "object", "cost": 6000, "drag": "paint", "cat": "furniture"},
-	{"id": "rack", "name": "Server Rack", "layer": "object", "cost": 100000, "drag": "paint", "cat": "compute"},
+	{"id": "desk", "name": "Desk", "layer": "object", "cost": 6000, "drag": "paint", "cat": "furniture", "access": true},
+	{"id": "rack", "name": "Server Rack", "layer": "object", "cost": 100000, "drag": "paint", "cat": "compute", "access": true},
 	{"id": "ficus", "name": "Ficus", "layer": "object", "cost": 300, "drag": "paint", "cat": "furniture"},
 	{"id": "coffee", "name": "Coffee Maker", "layer": "sub", "cost": 1500, "drag": "paint", "cat": "furniture"},
 	{"id": "redteam", "name": "Red-Team Rig", "layer": "object", "cost": 40000, "drag": "paint", "cat": "safety"},
@@ -301,6 +302,7 @@ const LEVELS := ["Ground", "Roof"]
 var view_level := 0
 var roof_objects := {}  # Vector2i -> "solar" / "ac", things built on roofs
 var window_objects := {}  # wall Vector2i -> "window_ac", things hung on walls
+var reach := {}  # Vector2i -> true for walkable tiles connected to a door or the outdoors
 var room_of := {}  # Vector2i -> index into buildings, for every tile under a roof
 var _heat_timer := 0.0
 var _heat_warned := false
@@ -392,6 +394,7 @@ func _ready() -> void:
 	astar.update()
 	_refresh_walkable()
 	_find_buildings()
+	_refresh_access()
 	power_bill = int(_power_demand() * 24.0 * GENERATORS.gen_portable.fuel)  # a first guess until day 1's bill is in
 	_add_staff("researcher", _tile_center(Vector2i(27, 22)), FOUNDER_SALARY)
 	_add_staff("engineer", _tile_center(Vector2i(28, 22)), FOUNDER_SALARY)
@@ -557,7 +560,7 @@ func _build_ui() -> void:
 # How everything works, in one place, so the other panels can stick to numbers.
 const GUIDE := [
 	["Getting started", "You run an AI startup in Calizona. Train models to get users, users bring revenue, and keep the board happy until your AI is smart enough to replace you as CEO. You win? If the board loses all confidence you're fired. If Deviation hits 100% the AI takes over."],
-	["Building (B)", "Open Build and pick a category tab (Tab cycles them). Left drag to build: floors fill a box, walls draw a box outline, furniture paints, doors place one at a time. Right click demolishes for a 50% refund. Furniture needs a floor. Staff walk only on floors and through doors. Exterior walls come in three tiers: Cheap, Brick (30% insulation) and Insulated (60%); insulation keeps the desert heat out. Build a better wall over an old one to upgrade it. Carpet goes on concrete and gives staff standing on it +3% productivity. Interior Walls take a quarter tile and block walking. Generators need ground: the Portable one goes anywhere, the Diesel needs gravel or better, and the Large Diesel and Power Plant need asphalt or concrete."],
+	["Building (B)", "Open Build and pick a category tab (Tab cycles them). Left drag to build: floors fill a box, walls draw a box outline, furniture paints, doors place one at a time. Right click demolishes for a 50% refund. Furniture needs a floor. Staff walk only on floors and through doors. Desks, Server Racks and Workstations need a clear path, one tile wide, from a door to at least one side; anything blocked in shows a red ! and does nothing until you clear a way. Exterior walls come in three tiers: Cheap, Brick (30% insulation) and Insulated (60%); insulation keeps the desert heat out. Build a better wall over an old one to upgrade it. Carpet goes on concrete and gives staff standing on it +3% productivity. Interior Walls take a quarter tile and block walking. Generators need ground: the Portable one goes anywhere, the Diesel needs gravel or better, and the Large Diesel and Power Plant need asphalt or concrete."],
 	["Roofs and views (R)", "Every enclosed building gets a roof that hides while your mouse is inside it. R switches between Ground and Roof view. Rooftop items like AC Units and Solar Panels switch to Roof view by themselves when you pick them."],
 	["Models (M)", "Server Racks make compute. Pick a model size to train; bigger models take longer and raise capability more. Better models bring more users, and users bring revenue. Cutting corners trains faster but raises Deviation. Engineers add compute."],
 	["Staff (T)", "Hire researchers, engineers, marketers and alignment researchers, then give each a job. You don't control people directly: they need a free desk or rack for their job, and heat makes them slower."],
@@ -1526,6 +1529,8 @@ func _rack_compute() -> float:
 
 
 func _rack_output(t: Vector2i) -> float:
+	if not _reachable(t):
+		return 0.0  # nobody can get to it to keep it running
 	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * power_ratio \
 		* (1.0 + _research_bonus("compute"))
 
@@ -1803,12 +1808,39 @@ func _refresh_walkable() -> void:
 func _after_build() -> void:
 	_refresh_walkable()
 	_find_buildings()
+	_refresh_access()
 	for s in staff:
 		s.path = PackedVector2Array()
 		s.working = false
 		# Lose the workstation if it was demolished or its spot got blocked.
 		if s.seat != NO_SEAT and (objects.get(s.seat) != JOBS[s.job].at or not _walkable(s.spot)):
 			s.seat = NO_SEAT
+
+
+# Flood out from every door and outdoor floor to find where staff can actually walk to.
+func _refresh_access() -> void:
+	reach = {}
+	var todo: Array[Vector2i] = []
+	for t in floor_tiles.keys() + wall_tiles.keys():
+		if _walkable(t) and (wall_tiles.get(t) == "door" or not room_of.has(t)):
+			reach[t] = true
+			todo.append(t)
+	while not todo.is_empty():
+		var t: Vector2i = todo.pop_back()
+		for d in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+			var n: Vector2i = t + d
+			if not reach.has(n) and _walkable(n):
+				reach[n] = true
+				todo.append(n)
+
+
+func _needs_access(id: String) -> bool:
+	return _tool_by_id(id).get("access", false)
+
+
+# Staff can walk up to at least one side of it.
+func _reachable(t: Vector2i) -> bool:
+	return [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT].any(func(d): return reach.has(t + d))
 
 
 func _add_staff(role: String, pos: Vector2, salary: int) -> void:
@@ -1873,7 +1905,7 @@ func _station_spot(t: Vector2i, kind: String) -> Vector2i:
 		else [Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP]
 	for d in sides:
 		var spot: Vector2i = t + d
-		if _walkable(spot) and not staff.any(func(o): return o.spot == spot and o.seat != NO_SEAT):
+		if reach.has(spot) and not staff.any(func(o): return o.spot == spot and o.seat != NO_SEAT):
 			return spot
 	return NO_SEAT
 
@@ -2319,6 +2351,8 @@ func _describe_hover() -> String:
 					lines[0] += ' "%s"' % rack_names[t]
 				lines.append("Output: %d%%" % int(_rack_output(t) * 100.0))
 			lines.append_array(_effects(id))
+			if _needs_access(id) and not _reachable(anchor):
+				lines.append("No access! Needs a clear path from a door to one side.")
 		elif sub != "":
 			lines.append(_tool_by_id(sub).get("name", sub.capitalize()))
 		elif window_objects.has(t):
@@ -2437,6 +2471,8 @@ func _draw() -> void:
 				_draw_door(item)
 			else:
 				call("_draw_" + objects[item], Vector2(item) * TILE, item)
+	if view_level == 0:
+		_draw_no_access()
 	if _heat_view():
 		_draw_rack_temps()
 	if deviation >= 25.0 and objects.get(hover) == "rack" and rack_names.has(hover) and view_level == 0:
@@ -2523,6 +2559,18 @@ func _draw_door(t: Vector2i) -> void:
 		# Door in a vertical wall: a thin wooden slab in line with the wall.
 		_box(Rect2(p + Vector2(0, 0), Vector2(TILE, 5)), WALL_H, top, front)
 		_box(Rect2(p + Vector2(13, 5), Vector2(6, TILE - 5)), WALL_H * 0.8, wood, wood.darkened(0.3))
+
+
+# A red outline and a "!" over anything staff can't walk up to.
+func _draw_no_access() -> void:
+	var blink := int(Time.get_ticks_msec() / 500) % 2 == 0
+	for t in objects:
+		if not _needs_access(objects[t]) or _reachable(t):
+			continue
+		var p := Vector2(t) * TILE
+		draw_rect(Rect2(p + Vector2(1, 1 - 14), Vector2(TILE - 2, TILE + 12)), Color(1, 0.25, 0.2, 0.9 if blink else 0.5), false, 2.0)
+		draw_circle(p + Vector2(TILE / 2.0, -20), 8, Color(0.85, 0.15, 0.1))
+		draw_string(ThemeDB.fallback_font, p + Vector2(TILE / 2.0 - 2.5, -15), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)
 
 
 func _draw_desk(p: Vector2, _t: Vector2i) -> void:
