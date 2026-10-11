@@ -13,7 +13,7 @@ const GRID_H := 48
 const PAN_SPEED := 700.0
 const SECONDS_PER_DAY := 900.0 / 91.0  # 15 real minutes per quarter at 1x
 const START_YEAR := 2027
-const FOUNDER_SALARY := 1200  # the founders took equity instead (the fools)
+const FOUNDER_SALARY := 0  # the founders are paid in equity and vibes (the fools)
 const RECRUITER_FEE := 5000
 const SEVERANCE_DAYS := 5
 # Power. Everything that draws power asks for kW; sources supply it 8 times a day (3 hours a step).
@@ -104,9 +104,9 @@ const WIN_CAPABILITY := 100
 
 # Training sizes. Cost and work grow with your best model (see _train_cost and _train_work).
 const MODEL_SIZES := [
-	{"name": "Small", "suffix": "Mini", "cost": 100_000, "work": 120.0, "gain": 8},
-	{"name": "Medium", "suffix": "Pro", "cost": 400_000, "work": 450.0, "gain": 16},
-	{"name": "Large", "suffix": "Ultra", "cost": 1_500_000, "work": 1500.0, "gain": 32},
+	{"name": "Small", "suffix": "Mini", "cost": 20_000, "work": 60.0, "gain": 8},
+	{"name": "Medium", "suffix": "Pro", "cost": 80_000, "work": 450.0, "gain": 16},
+	{"name": "Large", "suffix": "Ultra", "cost": 300_000, "work": 1500.0, "gain": 32},
 ]
 
 # Who you can hire. A role decides salary and shirt; it does its matching job at full speed.
@@ -267,7 +267,7 @@ var wall_tiles := {}  # Vector2i -> "wall" / "door"
 var objects := {}  # Vector2i -> "desk" / "rack" / "ficus"
 var sub_objects := {}  # subgrid cell Vector2i -> "coffee"
 
-var money := 2_000_000
+var money := 100_000
 var company := "Untitled AI"
 var models := []  # released, best last: [{name, cap, day}]
 var training := {}  # in progress: {name, cap, work, done}
