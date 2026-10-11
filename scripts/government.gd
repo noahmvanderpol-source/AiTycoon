@@ -1,7 +1,7 @@
 extends CanvasLayer
 # The Government page (L): lobbying the state of Calizona. Three politicians, each with a
-# price, a pet issue and a scandal meter. Donations buy Favor; Favor buys permits, contracts
-# and water rights. main.gd ticks it once a day and asks it for the grid cap.
+# price, a pet issue and a scandal meter, plus the State Legislature for general lobbying.
+# Donations buy Favor; Favor buys permits, contracts, water rights and friendlier laws. main.gd ticks it once a day and asks it for the grid cap.
 
 const HISTORY_DAYS := 182  # two quarters on the line graph
 const HISTORY_QUARTERS := 8  # bars on the spending graph
@@ -22,12 +22,17 @@ const FINE_FROM := 50.0  # Scrutiny at a quarter's end that gets you fined
 const FINE_PER_POINT := 1000
 const CONTRACT_PULL := 75.0  # Scrutiny that gets your state contract cancelled
 
-const OFFICES := ["Governor", "Utilities Commissioner", "Water Board Chair"]
+const OFFICES := ["Governor", "Utilities Commissioner", "Water Board Chair", "State Legislature"]
+const LEGISLATURE := 3  # a whole body, not a person: no scandals, nobody resigns
+const LOBBY_FAVOR := 10.0  # a donation spread over 117 members goes less far
+const DEREG_SCRUTINY := 0.5  # AI-Friendly Regulation: Scrutiny rises at half speed
+const TAX_BREAK := 0.1  # Tech Tax Break: this share of the daily burn comes back
 const PET_ISSUES := {
 	"jobs": "Jobs",
 	"clean_air": "Clean Air",
 	"donors": "Big Donors",
 	"innovation": "Innovation",
+	"public_mood": "Public Mood",  # the Legislature's; replacements never get it
 }
 const NAMES := ["Dale Pumpwell", "Darla Voltz", "Dusty McCreek", "Chip Gerrymander", "Lorna Quidproquo",
 	"Hank Pork", "Tammy Filibuster", "Rex Earmark", "Bev Loophole", "Wade Kickback", "Sunny Lobbington"]
@@ -35,11 +40,15 @@ const NAMES := ["Dale Pumpwell", "Darla Voltz", "Dusty McCreek", "Chip Gerrymand
 # What you can ask for. "by" is the office that grants it; favor is spent when granted.
 const ASKS := [
 	{"id": "grid", "name": "Grid Hookup Permit", "by": 1, "favor": 30, "cost": 15_000, "max": 4,
-		"desc": "+40 kW on your grid hookup's cap"},
+		"desc": "+40 kW grid cap"},
 	{"id": "contract", "name": "State AI Contract", "by": 0, "favor": 50, "cost": 0, "max": 1,
 		"desc": "$1,000 a day for two quarters"},
 	{"id": "water", "name": "Water Rights", "by": 2, "favor": 40, "cost": 20_000, "max": 5,
-		"desc": "+50 acre-feet a year from the canal (for water cooling, coming soon)"},
+		"desc": "+50 acre-feet a year (for water cooling, coming soon)"},
+	{"id": "dereg", "name": "AI-Friendly Regulation", "by": LEGISLATURE, "favor": 40, "cost": 0, "max": 1,
+		"desc": "Scrutiny rises half as fast"},
+	{"id": "tax", "name": "Tech Tax Break", "by": LEGISLATURE, "favor": 35, "cost": 0, "max": 1,
+		"desc": "10% of your daily burn back"},
 ]
 const GRID_PER_PERMIT := 40.0
 const CONTRACT_PER_DAY := 1000
@@ -55,7 +64,7 @@ const C_INCOME := Color(0.45, 0.85, 0.5)
 var main  # main.gd
 var politicians := []  # [{name, office, pet, price, favor, scandal}]
 var scrutiny := 10.0
-var granted := {"grid": 0, "contract": 0, "water": 0}
+var granted := {"grid": 0, "contract": 0, "water": 0, "dereg": 0, "tax": 0}
 var contract_days := 0  # left on the state contract
 var last_donation_day := -999
 var history := []  # one [influence, outrage, scrutiny] a day
@@ -77,11 +86,11 @@ var bar_chart: Control
 func _ready() -> void:
 	layer = 60  # same as the Research page, above the music controls
 	_rng.seed = 7
-	var prices := [25_000, 10_000, 8_000]
-	var pets := ["jobs", "clean_air", "donors"]
+	var prices := [25_000, 10_000, 8_000, 15_000]
+	var pets := ["jobs", "clean_air", "donors", "public_mood"]
 	for i in OFFICES.size():
-		politicians.append({"name": NAMES[i], "office": OFFICES[i], "pet": pets[i], "price": prices[i],
-			"favor": 10.0, "scandal": 5.0})
+		politicians.append({"name": NAMES[i] if i != LEGISLATURE else "117 members", "office": OFFICES[i],
+			"pet": pets[i], "price": prices[i], "favor": 10.0, "scandal": 0.0 if i == LEGISLATURE else 5.0})
 	_build_page()
 
 
@@ -114,6 +123,8 @@ func _pet_mood(p: Dictionary) -> int:
 			return 1 if main.day - last_donation_day <= 30 else -1
 		"innovation":
 			return 1 if main._best_cap() >= main._rival_cap() else -1
+		"public_mood":
+			return -1 if outrage >= 25.0 else (1 if outrage < 10.0 else 0)
 	return 0
 
 
@@ -123,15 +134,19 @@ func tick_day() -> void:
 		var p: Dictionary = politicians[i]
 		var mood := _pet_mood(p)
 		p.favor = clampf(p.favor + (FAVOR_PET_GOOD if mood > 0 else (FAVOR_PET_BAD if mood < 0 else FAVOR_DRIFT)), 0.0, 100.0)
+		if i == LEGISLATURE:
+			continue
 		p.scandal += SCANDAL_RATE * (1.0 + outrage * 0.02)
 		if outrage < 25.0:
 			p.scandal -= SCANDAL_COOL
 		p.scandal = clampf(p.scandal, 0.0, 100.0)
 		if p.scandal >= 100.0:
 			_scandal(i)
-	scrutiny += outrage * SCRUTINY_PER_OUTRAGE + main.deviation * SCRUTINY_PER_DEVIATION
+	scrutiny += (outrage * SCRUTINY_PER_OUTRAGE + main.deviation * SCRUTINY_PER_DEVIATION) * (DEREG_SCRUTINY if granted.dereg > 0 else 1.0)
 	scrutiny -= SCRUTINY_DECAY + influence() * SCRUTINY_INFLUENCE
 	scrutiny = clampf(scrutiny, 0.0, 100.0)
+	if granted.tax > 0:
+		main.money += int(main._daily_burn() * TAX_BREAK)
 	if contract_days > 0:
 		if scrutiny >= CONTRACT_PULL:
 			_end_contract("The state cancelled your AI contract \"pending review\". Scrutiny is too high, bro.")
@@ -170,7 +185,7 @@ func _scandal(i: int) -> void:
 	var old: Dictionary = politicians[i]
 	var taken := politicians.map(func(p): return p.name)
 	var free := NAMES.filter(func(n): return not taken.has(n))
-	var pets := PET_ISSUES.keys()
+	var pets := PET_ISSUES.keys().filter(func(k): return k != "public_mood")
 	politicians[i] = {"name": free[_rng.randi() % free.size()], "office": old.office,
 		"pet": pets[_rng.randi() % pets.size()], "price": old.price, "favor": 0.0, "scandal": 5.0}
 	scrutiny = minf(scrutiny + SCANDAL_SCRUTINY, 100.0)
@@ -191,7 +206,9 @@ func donate(i: int) -> void:
 	main.money -= p.price
 	spend[-1] += p.price
 	last_donation_day = main.day
-	p.favor = minf(p.favor + DONATION_FAVOR, 100.0)
+	p.favor = minf(p.favor + (LOBBY_FAVOR if i == LEGISLATURE else DONATION_FAVOR), 100.0)
+	if i == LEGISLATURE:
+		return  # lobbying a whole legislature is perfectly legal
 	p.scandal = minf(p.scandal + DONATION_SCANDAL, 100.0)
 	if p.scandal >= 100.0:
 		_scandal(i)
@@ -214,6 +231,10 @@ func ask(id: String) -> void:
 			main._chet("We landed a State AI Contract! The DMV wants a chatbot that says no in 40 languages.")
 		"water":
 			main._chet("Water rights secured: %d acre-feet a year. The farmers are thrilled. (They are not.)" % water_rights())
+		"dereg":
+			main._chet("The AI Freedom to Innovate Act passed 61-56. Nobody read it. I helped write it, bro.")
+		"tax":
+			main._chet("Tech Tax Break passed! The schools will be fine. Probably. They have iPads.")
 
 
 # --- Page -------------------------------------------------------------------
@@ -244,7 +265,7 @@ func refresh() -> void:
 		c.favor_label.text = "Favor %d" % p.favor
 		c.scandal.value = p.scandal
 		c.scandal_label.text = "Scandal %d" % p.scandal
-		c.donate.text = "Donate %s" % main._money(p.price)
+		c.donate.text = "%s %s" % ["Lobby" if i == LEGISLATURE else "Donate", main._money(p.price)]
 		c.donate.disabled = main.money < p.price
 	for a in ASKS:
 		var p: Dictionary = politicians[a.by]
@@ -260,8 +281,10 @@ func refresh() -> void:
 				status = ("%d days left" % contract_days) if contract_days > 0 else "No contract"
 			"water":
 				status = "%d acre-feet a year" % water_rights()
-		ask_labels[a.id].text = "%s. Needs %d Favor with the %s.\n%s%s" % [
-			a.desc, a.favor, OFFICES[a.by], status, "   (maxed)" if maxed and a.id != "contract" else ""]
+			"dereg", "tax":
+				status = "Passed" if granted[a.id] > 0 else "Not passed"
+		ask_labels[a.id].text = "%s. Needs %d Favor: %s.  %s%s" % [
+			a.desc, a.favor, OFFICES[a.by], status, "   (maxed)" if maxed and a.max > 1 else ""]
 	line_chart.queue_redraw()
 	bar_chart.queue_redraw()
 
@@ -344,7 +367,6 @@ func _build_page() -> void:
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 10)
 	top.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	top.size_flags_stretch_ratio = 1.4
 	col.add_child(top)
 	var meters := PanelContainer.new()
 	meters.add_theme_stylebox_override("panel", _box_style())
@@ -390,9 +412,10 @@ func _build_page() -> void:
 		var fl := _meter_row(c, fb)
 		var sb := _bar(C_SCANDAL)
 		var sl := _meter_row(c, sb)
+		sl.get_parent().visible = i != LEGISLATURE
 		var give := Button.new()
 		give.focus_mode = Control.FOCUS_NONE
-		give.tooltip_text = "+%d Favor, +%d Scandal" % [DONATION_FAVOR, DONATION_SCANDAL]
+		give.tooltip_text = ("+%d Favor" % LOBBY_FAVOR) if i == LEGISLATURE else "+%d Favor, +%d Scandal" % [DONATION_FAVOR, DONATION_SCANDAL]
 		give.pressed.connect(donate.bind(i))
 		c.add_child(give)
 		cards.append({"name": who, "pet": pet, "favor": fb, "favor_label": fl, "scandal": sb,
@@ -411,7 +434,7 @@ func _build_page() -> void:
 	var acol := VBoxContainer.new()
 	acol.add_theme_constant_override("separation", 2)
 	asks.add_child(acol)
-	acol.add_theme_constant_override("separation", 6)
+	acol.add_theme_constant_override("separation", 2)
 	for a in ASKS:
 		var arow := HBoxContainer.new()
 		arow.add_theme_constant_override("separation", 10)
