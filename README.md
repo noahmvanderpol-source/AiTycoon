@@ -7,7 +7,8 @@ Open Godot, choose **Import**, select this folder's `project.godot`, then press 
 
 ## Controls (prototype)
 You start with a small office in the Calizona desert, $2M and two staff who wander around.
-- `1`-`8` or the bottom bar: Carpet, Concrete, Wall, Door, Desk, Server Rack, Ficus, Coffee Maker
+- Bottom menu row: `B` Build, `M` Models, `T` Staff, `O` Board (click or press the key to open/close)
+- With Build open, `1`-`8` or the build bar: Carpet, Concrete, Wall, Door, Desk, Server Rack, Ficus, Coffee Maker
 - Each tile has a 2x2 subgrid. Small items (like the Coffee Maker) snap to a quarter tile, so four fit on one tile
 - `X`: Demolish tool (50% refund). Right click also demolishes one tile.
 - Left drag: floors fill a box, walls draw a box outline, furniture paints, doors place one at a time

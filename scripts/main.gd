@@ -84,14 +84,14 @@ const TOOLS := [
 
 const CHET_TIPS := [
 	"Bro. Welcome to Calizona. Zero regulations, infinite sun, slightly less water.",
-	"Drag Walls in a box and boom, you've got a room. That's basically architecture.",
+	"Press B to build. Drag Walls in a box and boom, you've got a room. That's basically architecture.",
 	"Desks need a floor under them. Even disruptors need carpet, bro.",
 	"Server Racks are where the AI lives. Feed them money and they feed you... eventually.",
 	"Ficus plants boost morale by 0%. Investors love them though.",
 	"Revenue? We're pre-revenue. That's a vibe, not a problem.",
 	"More Server Racks means more compute means faster training. It's literally just math, bro.",
 	"Researchers at desks train models faster. Engineers babysit racks for extra compute. Marketers at desks get users.",
-	"Assign jobs in the Staff tab. You don't tell people what to do, you tell them what their job is. Leadership.",
+	"Assign jobs under Staff (T). You don't tell people what to do, you tell them what their job is. Leadership.",
 	"The board sets one target a quarter. Hit it and they love you. Miss it and, well, I hear Uber's hiring.",
 	"Users are revenue. Revenue is users. I learned that at Stanford. Well, near Stanford.",
 	"Right-click demolishes stuff. Like the old office culture. Disrupted.",
@@ -148,6 +148,18 @@ var level_button: Button
 var speed_buttons := []
 var ui_layer: CanvasLayer
 var tabs: TabContainer
+var side_panel: Control
+var build_row: HBoxContainer
+var menu_buttons := {}  # menu id -> Button
+
+# The menu row along the bottom. Panels open from here by click or hotkey; add new ones to this list.
+# "tab" is the index of the panel in the right-hand side panel; build opens the build bar instead.
+const MENUS := [
+	{"id": "build", "name": "Build", "key": KEY_B},
+	{"id": "models", "name": "Models", "key": KEY_M, "tab": 0},
+	{"id": "staff", "name": "Staff", "key": KEY_T, "tab": 1},
+	{"id": "board", "name": "Board", "key": KEY_O, "tab": 2},
+]
 var models_label: Label
 var train_label: Label
 var train_bar: ProgressBar
@@ -253,6 +265,8 @@ func _build_ui() -> void:
 	chet_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(chet_label)
 	var row := HBoxContainer.new()
+	build_row = row
+	row.visible = false
 	col.add_child(row)
 	level_button = Button.new()
 	level_button.focus_mode = Control.FOCUS_NONE
@@ -267,6 +281,17 @@ func _build_ui() -> void:
 		b.pressed.connect(_select_tool.bind(i))
 		row.add_child(b)
 		tool_buttons.append(b)
+	var menu_row := HBoxContainer.new()
+	col.add_child(menu_row)
+	for m in MENUS:
+		var b := Button.new()
+		b.text = "%s (%s)" % [m.name, OS.get_keycode_string(m.key)]
+		b.toggle_mode = true
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size.x = 110
+		b.pressed.connect(_toggle_menu.bind(m.id))
+		menu_row.add_child(b)
+		menu_buttons[m.id] = b
 
 	var side := PanelContainer.new()
 	side.add_theme_stylebox_override("panel", _panel_style())
@@ -276,8 +301,11 @@ func _build_ui() -> void:
 	side.offset_right = -8
 	side.offset_top = 56
 	layer.add_child(side)
+	side_panel = side
+	side.visible = false
 	tabs = TabContainer.new()
 	tabs.focus_mode = Control.FOCUS_NONE
+	tabs.tabs_visible = false  # the bottom menu row picks the tab
 	side.add_child(tabs)
 	_build_models_tab()
 	_build_staff_tab()
@@ -499,7 +527,7 @@ func _ask_company_name() -> void:
 		"Found the company", func():
 			var n := edit.text.strip_edges()
 			company = n if n != "" else "Untitled AI"
-			_chet("%s. Love it. Huge. Now open the Models tab and train our first model on those racks." % company),
+			_chet("%s. Love it. Huge. Hit Models (M) down there and train our first model on those racks." % company),
 		edit)
 	edit.call_deferred("grab_focus")
 
@@ -527,6 +555,23 @@ func _toggle_level() -> void:
 		tool_buttons[i].text = "%s  %s" % [key, tool.name] if tool.cost == 0 else "%s  %s  %s" % [key, tool.name, _money(tool.cost)]
 		tool_buttons[i].visible = shown.has(i)
 	_select_tool(shown[0])
+
+
+# Build toggles the build bar; the other menus share the side panel, one at a time.
+func _toggle_menu(id: String) -> void:
+	if id == "build":
+		build_row.visible = not build_row.visible
+		dragging = false
+		paint_tiles.clear()
+	else:
+		var m: Dictionary = MENUS.filter(func(x): return x.id == id)[0]
+		var reopen: bool = not side_panel.visible or tabs.current_tab != m.tab
+		side_panel.visible = reopen
+		if reopen:
+			tabs.current_tab = m.tab
+	for m in MENUS:
+		var open: bool = build_row.visible if m.id == "build" else side_panel.visible and tabs.current_tab == m.get("tab", -1)
+		menu_buttons[m.id].button_pressed = open
 
 
 func _select_tool(i: int) -> void:
@@ -622,12 +667,18 @@ func _unhandled_input(event: InputEvent) -> void:
 	if modal:
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
+		for m in MENUS:
+			if event.keycode == m.key:
+				_toggle_menu(m.id)
+				return
 		var shown := _level_tools()
+		if not build_row.visible:
+			shown = []
 		if event.keycode >= KEY_1 and event.keycode < KEY_1 + shown.size() - 1:
 			_select_tool(shown[event.keycode - KEY_1])
 		elif event.keycode == KEY_R:
 			_toggle_level()
-		elif event.keycode == KEY_X:
+		elif event.keycode == KEY_X and build_row.visible:
 			_select_tool(TOOLS.size() - 1)
 		elif event.keycode == KEY_SPACE:
 			_set_speed(1 if speed == 0 else 0)
@@ -639,7 +690,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and event.pressed:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
-				if _in_bounds(hover):
+				if build_row.visible and _in_bounds(hover):
 					dragging = true
 					drag_start = hover
 					paint_tiles.clear()
@@ -649,7 +700,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				if dragging:
 					dragging = false
 					paint_tiles.clear()
-				else:
+				elif build_row.visible:
 					_demolish(hover)
 					_after_build()
 			MOUSE_BUTTON_MIDDLE:
@@ -979,7 +1030,7 @@ func _end_quarter() -> void:
 	_show_modal("%s board meeting" % _quarter_name(q - 1),
 		"Target: %s\n%s\nBoard Confidence: %d%% (%+d)\n\nNext quarter: %s\n\"%s\"" % [old, verdict, confidence, change, target.text, target.quote],
 		"Back to work", func(): pass)
-	_chet("Board meeting survived. New target's in the Board tab. We got this. Probably.")
+	_chet("Board meeting survived. New target is under Board (O). We got this. Probably.")
 
 
 func _end_game(title: String, body: String) -> void:
@@ -1438,7 +1489,7 @@ func _draw_person(pos: Vector2, shirt: Color) -> void:
 
 
 func _draw_preview() -> void:
-	if not _in_bounds(hover):
+	if not build_row.visible or not _in_bounds(hover):
 		return
 	var tool: Dictionary = TOOLS[tool_index]
 	var size := SUB if _is_sub_tool() else TILE
