@@ -255,6 +255,11 @@ func _draw() -> void:
 		if vis.intersects(lot.r):
 			call("_draw_" + lot.kind, lot.r)
 	_draw_signs(vis)
+	var grid := Color(0, 0, 0, 0.06)  # the same faint tile grid as on your property, over everything
+	for x in range(a.x, b.x + 1):
+		draw_line(Vector2(x, a.y) * TILE, Vector2(x, b.y) * TILE, grid)
+	for y in range(a.y, b.y + 1):
+		draw_line(Vector2(a.x, y) * TILE, Vector2(b.x, y) * TILE, grid)
 	_draw_smog(a, b)
 
 
@@ -406,108 +411,117 @@ func _box(base: Rect2, h: float, top: Color, front: Color) -> void:
 	draw_rect(Rect2(Vector2(base.position.x, base.end.y - h), Vector2(base.size.x, h)), front)
 
 
-# A house: walls, a pitched roof seen from the front, a door and a window or two.
+# A whole-tile rect: x, y, w, h in tiles.
+func _tiles(x: int, y: int, w := 1, h := 1) -> Rect2:
+	return Rect2(Vector2(x, y) * TILE, Vector2(w, h) * TILE)
+
+
+# A house filling `base` (whole tiles): walls, a pitched roof seen from the front, a door and windows.
 func _draw_home(base: Rect2, h: float, wall: Color, roof: Color) -> void:
-	_ellipse(base.get_center() + Vector2(4, base.size.y / 2), base.size.x / 2 + 4, 6, Color(0, 0, 0, 0.15))
+	draw_rect(Rect2(base.position + Vector2(4, base.size.y - 6), Vector2(base.size.x, 6)), Color(0, 0, 0, 0.15))
 	draw_rect(Rect2(base.position.x, base.end.y - h, base.size.x, h), wall)
 	var top := base.end.y - h
-	var peak := top - base.size.y * 0.9
-	draw_colored_polygon(PackedVector2Array([Vector2(base.position.x - 4, top), Vector2(base.end.x + 4, top),
-			Vector2(base.end.x - 6, peak), Vector2(base.position.x + 6, peak)]), roof)
-	draw_line(Vector2(base.position.x + 6, peak), Vector2(base.end.x - 6, peak), roof.darkened(0.3), 2.0)
+	draw_colored_polygon(PackedVector2Array([Vector2(base.position.x, top), Vector2(base.end.x, top),
+			Vector2(base.end.x - 8, base.position.y), Vector2(base.position.x + 8, base.position.y)]), roof)
+	draw_line(Vector2(base.position.x + 8, base.position.y), Vector2(base.end.x - 8, base.position.y), roof.darkened(0.3), 2.0)
 	var mid := base.position.x + base.size.x / 2
 	draw_rect(Rect2(mid - 5, base.end.y - 16, 10, 16), wall.darkened(0.45))
-	for side in [-1, 1]:
-		draw_rect(Rect2(mid + side * 20 - 6, base.end.y - h + 6, 12, 9), Color(0.55, 0.7, 0.8))
+	if base.size.x >= TILE * 3:
+		for side in [-1, 1]:
+			draw_rect(Rect2(mid + side * base.size.x / 4 - 6, base.end.y - h + 6, 12, 9), Color(0.55, 0.7, 0.8))
 
 
+func _draw_palm(t: Vector2i) -> void:  # a palm tree that drinks more than the house
+	var c := Vector2(t) * TILE + Vector2(16, 28)
+	draw_line(c, c - Vector2(2, 30), Color(0.5, 0.38, 0.25), 3.0)
+	for k in 5:
+		var ang := -PI / 2 + (k - 2) * 0.55
+		draw_line(c - Vector2(2, 30), c - Vector2(2, 30) + Vector2(cos(ang) * 13, sin(ang) * 8 + 6), Color(0.3, 0.55, 0.25), 3.0)
+
+
+# Lots are 6 tiles wide. Row by row from the street: a 2-tile path, a 4x2 house, yard.
 func _draw_house(lr: Rect2i) -> void:
-	var p := Vector2(lr.position) * TILE
+	var x := lr.position.x
+	var y := lr.position.y
 	var h := _hash(lr.position, 3)
-	draw_rect(Rect2(p, Vector2(lr.size) * TILE), Color(0.74, 0.7, 0.45) if h % 3 else Color(0.62, 0.66, 0.38))  # yard
-	draw_rect(Rect2(p, Vector2(lr.size) * TILE), Color(0.55, 0.47, 0.32), false, 2.0)  # property line
-	var front := 1 if lr.position.y > MAIN_ST_Y else 0  # face the nearest street
-	var base := Rect2(p + Vector2(TILE, TILE * (1 + front)), Vector2(4, 2) * TILE)
-	if front == 0:
-		draw_rect(Rect2(p + Vector2(TILE * 2.6, TILE * 3), Vector2(TILE * 0.8, TILE * 2)), Color(0.68, 0.67, 0.64))  # path
-	else:
-		draw_rect(Rect2(p + Vector2(TILE * 2.6, 0), Vector2(TILE * 0.8, TILE)), Color(0.68, 0.67, 0.64))
-	_draw_home(base, 26.0, HOUSE_COLORS[h % HOUSE_COLORS.size()], ROOF_COLORS[(h / 7) % ROOF_COLORS.size()])
+	draw_rect(_tiles(x, y, lr.size.x, lr.size.y), Color(0.74, 0.7, 0.45) if h % 3 else Color(0.62, 0.66, 0.38))  # yard
+	draw_rect(_tiles(x, y, lr.size.x, lr.size.y), Color(0.55, 0.47, 0.32), false, 2.0)  # property line
+	var street_below := lr.end.y == MAIN_ST_Y  # face the nearest street
+	var house_y := y + 1 if street_below else y + 2
+	var path_y := house_y + 2 if street_below else y
+	draw_rect(_tiles(x + 2, path_y, 2, lr.end.y - path_y if street_below else 2).grow_individual(-8, 0, -8, 0), Color(0.68, 0.67, 0.64))
+	_draw_home(_tiles(x + 1, house_y, 4, 2), 26.0, HOUSE_COLORS[h % HOUSE_COLORS.size()], ROOF_COLORS[(h / 7) % ROOF_COLORS.size()])
+	var extra_y := y if street_below else lr.end.y - 1  # the back yard row
 	if h % 4 == 0:  # pool, because it's the desert
-		var pr := Rect2(p + Vector2(TILE * 4.4, TILE * (0.3 if front else 3.3)), Vector2(TILE * 1.3, TILE * 1.2))
+		var pr := _tiles(x + 4, extra_y, 2, 1).grow(-3)
 		draw_rect(pr, Color(0.3, 0.7, 0.85))
 		draw_rect(pr, Color(0.9, 0.9, 0.88), false, 2.0)
 	elif h % 4 == 1:  # a car that hasn't moved since 2019
-		_draw_car(p + Vector2(TILE * 0.2, TILE * (0.4 if front else 3.4)), Color(0.55, 0.3, 0.2), false)
-	else:  # a palm tree that drinks more than the house
-		var c := p + Vector2(TILE * 5.3, TILE * (1.2 if front else 4.0))
-		draw_line(c, c - Vector2(2, 34), Color(0.5, 0.38, 0.25), 3.0)
-		for k in 5:
-			var ang := -PI / 2 + (k - 2) * 0.55
-			draw_line(c - Vector2(2, 34), c - Vector2(2, 34) + Vector2(cos(ang) * 14, sin(ang) * 8 + 6), Color(0.3, 0.55, 0.25), 3.0)
+		_draw_car(Vector2(x, path_y + (1 if street_below else 0)) * TILE + Vector2(4, 9), Color(0.55, 0.3, 0.2), false)
+	else:
+		_draw_palm(Vector2i(x + 5, house_y + 1))
 
 
 func _draw_gas(lr: Rect2i) -> void:
-	var p := Vector2(lr.position) * TILE
-	draw_rect(Rect2(p, Vector2(lr.size) * TILE), Color(0.36, 0.36, 0.37))  # forecourt
-	_box(Rect2(p + Vector2(TILE * 5.5, TILE * 1), Vector2(3, 2.5) * TILE), 28.0, Color(0.85, 0.83, 0.78), Color(0.75, 0.72, 0.66))  # store
-	draw_rect(Rect2(p + Vector2(TILE * 6.6, TILE * 3.5 - 18), Vector2(18, 18)), Color(0.5, 0.65, 0.75))
-	for k in 2:  # pumps
-		_box(Rect2(p + Vector2(TILE * (1.2 + k * 2.2), TILE * 2.4), Vector2(10, 8)), 18.0, Color(0.85, 0.2, 0.15), Color(0.65, 0.12, 0.1))
-	for k in 2:  # canopy posts and roof
-		draw_rect(Rect2(p + Vector2(TILE * (0.8 + k * 3.6), TILE * 1.5 - 30), Vector2(4, 40)), Color(0.8, 0.8, 0.8))
-	draw_rect(Rect2(p + Vector2(TILE * 0.4, TILE * 0.2), Vector2(TILE * 4.6, TILE * 1.2)), Color(0.92, 0.92, 0.9))
-	draw_rect(Rect2(p + Vector2(TILE * 0.4, TILE * 1.4 - 8), Vector2(TILE * 4.6, 8)), Color(0.85, 0.2, 0.15))
-	_label(p + Vector2(TILE * 5.5, TILE * 0.6), "GAS 'N' GRUB", 11, Color(1, 0.9, 0.4))
-	_label(p + Vector2(TILE * 5.5, TILE * 0.6 + 13), "$11.99/gal", 10, Color(1, 1, 1))
+	var x := lr.position.x
+	var y := lr.position.y
+	draw_rect(_tiles(x, y, lr.size.x, lr.size.y), Color(0.36, 0.36, 0.37))  # forecourt
+	_box(_tiles(x + 6, y + 1, 3, 3), 28.0, Color(0.85, 0.83, 0.78), Color(0.75, 0.72, 0.66))  # store, 3x3
+	draw_rect(Rect2(Vector2(x + 7, y + 4) * TILE + Vector2(7, -18), Vector2(18, 18)), Color(0.5, 0.65, 0.75))
+	for k in 2:  # pumps, one tile each
+		_box(_tiles(x + 1 + k * 2, y + 2).grow(-9), 18.0, Color(0.85, 0.2, 0.15), Color(0.65, 0.12, 0.1))
+	draw_rect(_tiles(x, y + 1, 5, 1), Color(0.92, 0.92, 0.9, 0.85))  # canopy over the pumps, 5x1
+	draw_rect(Rect2(Vector2(x, y + 2) * TILE - Vector2(0, 6), Vector2(5 * TILE, 6)), Color(0.85, 0.2, 0.15))
+	for k in [0, 5]:
+		draw_rect(Rect2(Vector2(x + k, y + 2) * TILE - Vector2(2 if k else 0, 0), Vector2(3, TILE)), Color(0.8, 0.8, 0.8))
+	_label(Vector2(x + 7.5, y + 0.3) * TILE, "GAS 'N' GRUB", 11, Color(1, 0.9, 0.4))
+	_label(Vector2(x + 7.5, y + 0.3) * TILE + Vector2(0, 12), "$11.99/gal", 10, Color(1, 1, 1))
 
 
 func _draw_lot(lr: Rect2i) -> void:
-	var p := Vector2(lr.position) * TILE
-	var size := Vector2(lr.size) * TILE
-	draw_rect(Rect2(p, size), Color(0.78, 0.68, 0.48))
+	var r := _tiles(lr.position.x, lr.position.y, lr.size.x, lr.size.y)
+	draw_rect(r, Color(0.78, 0.68, 0.48))
 	var dash := Color(0.95, 0.9, 0.7, 0.8)
-	var corners := [p, p + Vector2(size.x, 0), p + size, p + Vector2(0, size.y)]
+	var corners := [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]
 	for i in 4:
 		draw_dashed_line(corners[i], corners[(i + 1) % 4], dash, 2.0, 8.0)
-	var post := p + Vector2(size.x / 2, size.y / 2 + 10)
-	draw_rect(Rect2(post - Vector2(2, 26), Vector2(4, 26)), Color(0.45, 0.35, 0.25))
-	draw_rect(Rect2(post - Vector2(30, 46), Vector2(60, 22)), Color(0.25, 0.45, 0.3))
-	draw_rect(Rect2(post - Vector2(30, 46), Vector2(60, 22)), Color(0.9, 0.9, 0.85), false, 1.5)
-	_label(post - Vector2(0, 38), "COMMUNITY", 9, Color(1, 1, 1))
-	_label(post - Vector2(0, 28), "LOT", 9, Color(1, 1, 1))
+	var sign := _tiles(lr.position.x + 2, lr.position.y + 2, 2, 1)  # a 2-tile sign in the middle
+	draw_rect(Rect2(sign.get_center() + Vector2(-2, 0), Vector2(4, 16)), Color(0.45, 0.35, 0.25))
+	draw_rect(sign.grow_individual(-2, 0, -2, -12), Color(0.25, 0.45, 0.3))
+	draw_rect(sign.grow_individual(-2, 0, -2, -12), Color(0.9, 0.9, 0.85), false, 1.5)
+	_label(sign.position + Vector2(TILE, 6), "COMMUNITY", 8, Color(1, 1, 1))
+	_label(sign.position + Vector2(TILE, 15), "LOT", 8, Color(1, 1, 1))
 
 
+# Farmyard, 5x4 tiles: a 2x2 farmhouse, a 2x2 barn, a windmill pump on its own tile.
 func _draw_farmhouse(fr: Rect2i, i: int) -> void:
-	var p := Vector2(fr.position) * TILE
-	draw_rect(Rect2(p, Vector2(fr.size) * TILE), Color(0.66, 0.6, 0.4))
-	_draw_home(Rect2(p + Vector2(TILE * 0.3, TILE * 1.6), Vector2(2.4, 1.6) * TILE), 24.0, Color(0.92, 0.9, 0.84), Color(0.4, 0.42, 0.45))
-	# red barn
-	_draw_home(Rect2(p + Vector2(TILE * 3.0, TILE * 1.2), Vector2(1.8, 2.2) * TILE), 30.0, Color(0.65, 0.2, 0.15), Color(0.42, 0.4, 0.38))
-	# windmill water pump
-	var w := p + Vector2(TILE * 0.6, TILE * 3.8)
+	var x := fr.position.x
+	var y := fr.position.y
+	draw_rect(_tiles(x, y, fr.size.x, fr.size.y), Color(0.66, 0.6, 0.4))
+	_draw_home(_tiles(x, y + 1, 2, 2), 24.0, Color(0.92, 0.9, 0.84), Color(0.4, 0.42, 0.45))
+	_draw_home(_tiles(x + 3, y + 1, 2, 2), 34.0, Color(0.65, 0.2, 0.15), Color(0.42, 0.4, 0.38))  # red barn
+	var w := Vector2(x + 2.5, y + 4) * TILE - Vector2(0, 4)  # windmill pump on tile (x+2, y+3)
 	draw_line(w, w - Vector2(0, 50), Color(0.4, 0.38, 0.36), 2.0)
 	var ang := _time * 2.0 + i
 	for k in 6:
 		var d := Vector2(cos(ang + k * TAU / 6), sin(ang + k * TAU / 6)) * 10
 		draw_line(w - Vector2(0, 50), w - Vector2(0, 50) + d, Color(0.75, 0.74, 0.7), 2.0)
-	_label(p + Vector2(TILE * 2.5, TILE * 3.9 + 6), "NOT YOURS (YET)", 9, Color(1, 0.95, 0.8))
+	_label(Vector2(x + 2.5, y + 3.5) * TILE, "NOT YOURS (YET)", 9, Color(1, 0.95, 0.8))
 
 
 func _draw_pipeline() -> void:
 	var x := (PIPE_X + 0.5) * TILE
-	var top := (CANAL_TOP + 5.6) * TILE
+	var top := (CANAL_TOP + 6) * TILE
 	var bottom := 0.0
-	for y in range(CANAL_TOP + 7, 0, 2):  # supports
-		draw_rect(Rect2(x - 7, y * TILE + 10, 14, 6), Color(0.45, 0.43, 0.4))
+	for y in range(CANAL_TOP + 7, 0, 2):  # a support every other tile
+		draw_rect(Rect2(Vector2(PIPE_X, y) * TILE + Vector2(9, 22), Vector2(14, 6)), Color(0.45, 0.43, 0.4))
 	draw_line(Vector2(x + 3, top + 6), Vector2(x + 3, bottom + 4), Color(0, 0, 0, 0.2), 10.0)
 	draw_line(Vector2(x, top), Vector2(x, bottom), Color(0.55, 0.6, 0.62), 10.0)
 	draw_line(Vector2(x - 2, top), Vector2(x - 2, bottom), Color(0.72, 0.77, 0.8), 3.0)
-	# pump house where it leaves the canal
-	_box(Rect2(Vector2(PIPE_X - 1, CANAL_TOP + 6) * TILE + Vector2(4, 0), Vector2(TILE * 3 - 8, TILE * 1.4)), 22.0,
-			Color(0.62, 0.64, 0.66), Color(0.5, 0.52, 0.55))
-	_label(Vector2(x, (CANAL_TOP + 6) * TILE + 8), "PUMP", 9, Color(1, 1, 1))
-	# shut-off valve at your fence
+	# pump house where it leaves the canal: 3x1 tiles on the canal road
+	_box(_tiles(PIPE_X - 1, CANAL_TOP + 6, 3, 1), 22.0, Color(0.62, 0.64, 0.66), Color(0.5, 0.52, 0.55))
+	_label(Vector2(x, (CANAL_TOP + 6) * TILE - 12), "PUMP", 9, Color(1, 1, 1))
+	# shut-off valve on the tile outside your fence
 	draw_circle(Vector2(x, -TILE * 0.5), 9, Color(0.75, 0.2, 0.15))
 	draw_line(Vector2(x - 9, -TILE * 0.5), Vector2(x + 9, -TILE * 0.5), Color(0.5, 0.1, 0.08), 3.0)
 
@@ -560,13 +574,13 @@ func _draw_signs(vis: Rect2i) -> void:
 		_label(p + Vector2(TILE * 2, -42), "CHAT ABC", 14, Color(0.1, 0.5, 0.4))
 		_label(p + Vector2(TILE * 2, -24), "It's probably fine.", 10, Color(0.2, 0.2, 0.2))
 		_label(p + Vector2(TILE * 2, -13), "- ClosedAI", 9, Color(0.4, 0.4, 0.4))
-	if vis.has_point(Vector2i(-12, MAIN_ST_Y + 2)):  # town sign
-		var p := Vector2(-12, MAIN_ST_Y + 2) * TILE
+	if vis.has_point(Vector2i(-12, MAIN_ST_Y + 4)):  # town sign
+		var p := Vector2(-12, MAIN_ST_Y + 4) * TILE
 		draw_rect(Rect2(p + Vector2(10, -10), Vector2(4, 30)), Color(0.4, 0.35, 0.3))
-		draw_rect(Rect2(p + Vector2(46, -10), Vector2(4, 30)), Color(0.4, 0.35, 0.3))
-		draw_rect(Rect2(p + Vector2(0, -40), Vector2(60, 32)), Color(0.2, 0.45, 0.3))
-		_label(p + Vector2(30, -26), TOWN.to_upper(), 10, Color(1, 1, 1))
-		_label(p + Vector2(30, -14), "Pop. 212", 9, Color(0.9, 0.95, 0.9))
+		draw_rect(Rect2(p + Vector2(50, -10), Vector2(4, 30)), Color(0.4, 0.35, 0.3))
+		draw_rect(Rect2(p + Vector2(0, -40), Vector2(64, 32)), Color(0.2, 0.45, 0.3))
+		_label(p + Vector2(32, -26), TOWN.to_upper(), 10, Color(1, 1, 1))
+		_label(p + Vector2(32, -14), "Pop. 212", 9, Color(0.9, 0.95, 0.9))
 
 
 func _label(center: Vector2, text: String, size: int, col: Color) -> void:
