@@ -21,7 +21,8 @@ const SEVERANCE_DAYS := 5
 # Short on power? Racks and coolers all run at the fraction that's covered.
 const RACK_KW := 6.0
 const SOLAR_KW := 2.0  # a rooftop Solar Panel at noon
-# Solar panels on the ground, outdoors. kw: output at noon. size: tiles wide and deep.
+# Solar panels. Built over a roof they go on the roof; anywhere else, on open ground.
+# kw: output at noon. size: tiles wide and deep.
 const SOLAR_ARRAYS := {
 	"solar_s": {"kw": 2.0, "size": Vector2i(1, 1)},
 	"solar_m": {"kw": 4.5, "size": Vector2i(2, 1)},
@@ -185,10 +186,9 @@ const TOOLS := [
 	{"id": "power_plant", "name": "Portable Power Plant", "layer": "object", "cost": 600000, "drag": "paint", "cat": "power"},
 	{"id": "battery", "name": "Battery", "layer": "object", "cost": 30000, "drag": "paint", "cat": "power"},
 	{"id": "grid", "name": "Grid Hookup", "layer": "object", "cost": 50000, "drag": "single", "cat": "power"},
-	{"id": "solar_s", "name": "Small Solar Panel", "layer": "object", "cost": 8000, "drag": "paint", "cat": "power"},
-	{"id": "solar_m", "name": "Medium Solar Panel", "layer": "object", "cost": 17000, "drag": "paint", "cat": "power"},
-	{"id": "solar_l", "name": "Large Solar Panel", "layer": "object", "cost": 50000, "drag": "single", "cat": "power"},
-	{"id": "solar", "name": "Solar Panel", "layer": "roof", "cost": 8000, "drag": "paint", "cat": "power"},
+	{"id": "solar_s", "name": "Solar Panel (S)", "layer": "object", "where": "either", "cost": 8000, "drag": "paint", "cat": "power"},
+	{"id": "solar_m", "name": "Solar Panel (M)", "layer": "object", "where": "either", "cost": 17000, "drag": "paint", "cat": "power"},
+	{"id": "solar_l", "name": "Solar Panel (L)", "layer": "object", "where": "either", "cost": 50000, "drag": "single", "cat": "power"},
 	{"id": "demolish", "name": "Demolish", "layer": "", "cost": 0, "drag": "fill"},
 ]
 
@@ -228,7 +228,7 @@ const RESEARCH := [
 	{"id": "prefab", "branch": "construction", "name": "Prefab Walls", "cost": 20, "structure_discount": 0.25,
 		"desc": "Floors, walls and doors 25% cheaper. Some assembly required. All of it, actually."},
 	{"id": "roofs", "branch": "construction", "name": "Load-Bearing Roofs", "cost": 45, "unlocks": ["solar"],
-		"desc": "Unlocks rooftop Solar Panels. The roof was not, technically, load-bearing before."},
+		"desc": "Lets Solar Panels go on roofs. The roof was not, technically, load-bearing before."},
 	{"id": "insulation", "branch": "construction", "name": "Spray Foam Insulation", "cost": 90, "rack_heat": -0.2,
 		"desc": "Racks heat rooms 20% less."},
 	{"id": "modular", "branch": "construction", "name": "Modular Datacenters", "cost": 160, "rack_discount": 0.2,
@@ -367,6 +367,7 @@ var _power_warned := false
 var _smog_warned := false
 var battery_charge := 0.0  # kWh, shared by all batteries
 var power_stats := {}  # last step: demand, solar, grid, battery, gens (kW)
+var roof_parts := {}  # same as parts, for big things on roofs
 var parts := {}  # Vector2i -> top-left tile of the big object covering it (objects holds "part" there)
 var gen_output := {}  # Vector2i -> kW a generator made last step
 var smog := PackedFloat32Array()  # pollution per tile, 0-100, GRID_W * GRID_H
@@ -934,7 +935,7 @@ func _update_power_tab() -> void:
 	power_label.text = ("Demand: %d kW   Covered: %d%%\n%s\n\nSolar: %d kW (%d roof panels, %d on the ground)\nGrid: %s\nBatteries: %s\nGenerators: %d kW\n%s\n\n"
 		+ "Power bill yesterday: %s\nPollution: %d/100\n\n"
 		+ "Used by: racks, AC units, red-team rigs\nSupplied by: solar, grid (max %d kW), batteries, generators") % [
-		st.demand, int(power_ratio * 100.0), "Daytime" if SUN[_power_step] > 0.0 else "Night", st.solar, roof_objects.values().count("solar"), objects.values().filter(func(o): return SOLAR_ARRAYS.has(o)).size(),
+		st.demand, int(power_ratio * 100.0), "Daytime" if SUN[_power_step] > 0.0 else "Night", st.solar, roof_objects.values().filter(func(o): return SOLAR_ARRAYS.has(o)).size(), objects.values().filter(func(o): return SOLAR_ARRAYS.has(o)).size(),
 		("%d of %d kW" % [st.grid, GRID_KW]) if objects.values().has("grid") else "not connected",
 		("%d, %d of %d kWh" % [bats, battery_charge, bats * BATTERY_KWH]) if bats > 0 else "none",
 		st.gens, "\n".join(gen_lines) if not gen_lines.is_empty() else "none", _money(power_bill), _pollution(), GRID_KW]
@@ -1051,6 +1052,8 @@ func _ask_company_name() -> void:
 
 
 func _tool_level(tool: Dictionary) -> int:
+	if tool.get("where") == "either":  # goes on roofs or the ground, whichever you're looking at
+		return view_level
 	return 1 if tool.layer == "roof" else 0
 
 
@@ -1350,7 +1353,15 @@ func _can_place(id: String, t: Vector2i) -> bool:
 			return wall_tiles.get(t) != "door" and not window_objects.has(t) and not objects.has(t) and _subs_in(t).is_empty()
 		"solar", "ac":
 			return _roofed(t) and not roof_objects.has(t)
-		"gen_portable", "gen_diesel", "gen_large", "power_plant", "grid", "solar_s", "solar_m", "solar_l":  # outdoors only, bro. Fumes.
+		"solar_s", "solar_m", "solar_l":  # on the roof if it's all under one, else on open ground
+			var foot := _footprint(id, t)
+			if foot.all(func(f): return _roofed(f)):
+				return foot.all(func(f): return not roof_objects.has(f)) and not _locked("solar")
+			for f in foot:
+				if not _in_bounds(f) or _roofed(f) or wall_tiles.has(f) or objects.has(f) or not _subs_in(f).is_empty():
+					return false
+			return true
+		"gen_portable", "gen_diesel", "gen_large", "power_plant", "grid":  # outdoors only, bro. Fumes.
 			if id == "grid" and objects.values().has("grid"):
 				return false
 			for f in _footprint(id, t):
@@ -1428,11 +1439,14 @@ func _commit(tiles: Array) -> void:
 				if not _can_place(tool.id, t):  # an earlier big one in this drag took the space
 					money += _tool_cost(tool)
 					continue
-				objects[t] = tool.id
+				var on_roof: bool = SOLAR_ARRAYS.has(tool.id) and _roofed(t)
+				var layer: Dictionary = roof_objects if on_roof else objects
+				var layer_parts: Dictionary = roof_parts if on_roof else parts
+				layer[t] = tool.id
 				for f in _footprint(tool.id, t):
 					if f != t:
-						objects[f] = "part"
-						parts[f] = t
+						layer[f] = "part"
+						layer_parts[f] = t
 			"sub": sub_objects[t] = tool.id
 			"roof": roof_objects[t] = tool.id
 			"window": window_objects[t] = tool.id
@@ -1444,8 +1458,7 @@ func _demolish(t: Vector2i) -> void:
 	# Small subgrid items go first, all of the tile's at once.
 	if view_level == 1:
 		if roof_objects.has(t):
-			money += int(_tool_by_id(roof_objects[t]).cost / 2)
-			roof_objects.erase(t)
+			_remove_roof_object(roof_parts.get(t, t))
 		return
 	if window_objects.has(t):
 		money += int(_tool_by_id(window_objects[t]).cost / 2)
@@ -1945,6 +1958,9 @@ func _tick_power() -> void:
 	for t in objects:
 		if SOLAR_ARRAYS.has(objects[t]):
 			solar += SOLAR_ARRAYS[objects[t]].kw
+	for t in roof_objects:
+		if SOLAR_ARRAYS.has(roof_objects[t]):
+			solar += SOLAR_ARRAYS[roof_objects[t]].kw
 	solar *= SUN[_power_step]
 	var used_solar := minf(solar, need)
 	need -= used_solar
@@ -2198,9 +2214,19 @@ func _find_buildings() -> void:
 			money += int(_tool_by_id(window_objects[t]).cost / 2)
 			window_objects.erase(t)
 	for t in roof_objects.keys():  # the roof came down, and so did whatever was on it
-		if not _roofed(t):
-			money += int(_tool_by_id(roof_objects[t]).cost / 2)
-			roof_objects.erase(t)
+		if roof_objects.has(t) and not _roofed(t):
+			_remove_roof_object(roof_parts.get(t, t))
+
+
+# Takes a roof object (and all its tiles) off, refunding half.
+func _remove_roof_object(a: Vector2i) -> void:
+	var id: String = roof_objects.get(a, "")
+	money += int(_tool_by_id(id).get("cost", 0) / 2)
+	for f in _footprint(id, a):
+		if roof_parts.get(f) == a:
+			roof_objects.erase(f)
+			roof_parts.erase(f)
+	roof_objects.erase(a)
 
 
 func _roofed(t: Vector2i) -> bool:
@@ -2237,7 +2263,7 @@ func _draw_roof(bld: Dictionary) -> void:
 		elif wall_tiles.get(t) == "door":  # side or back door: mark it on the roof edge
 			draw_rect(Rect2(p + Vector2(8, 8), Vector2(TILE - 16, TILE - 16)), Color(0.62, 0.43, 0.25, a))
 	for t in bld.tiles:
-		if roof_objects.has(t):
+		if roof_objects.has(t) and roof_objects[t] != "part":
 			call("_draw_roof_" + roof_objects[t], Vector2(t) * TILE - lift, a)
 
 
@@ -2256,6 +2282,32 @@ func _draw_window_ac(p: Vector2, a: float) -> void:
 	for k in 3:
 		draw_line(r.position + Vector2(2, 3 + 3 * k), r.position + Vector2(14, 3 + 3 * k), Color(0.45, 0.45, 0.48, a))
 	draw_rect(Rect2(r.position + Vector2(0, 12), Vector2(16, 2)), Color(0.3, 0.6, 0.9, a))  # it drips, obviously
+
+
+func _draw_roof_solar_s(p: Vector2, a: float) -> void:
+	_draw_roof_panels(p, Vector2i(1, 1), a)
+
+
+func _draw_roof_solar_m(p: Vector2, a: float) -> void:
+	_draw_roof_panels(p, Vector2i(2, 1), a)
+
+
+func _draw_roof_solar_l(p: Vector2, a: float) -> void:
+	_draw_roof_panels(p, Vector2i(3, 2), a)
+
+
+# Flat panels bolted to the roof, a 2x3 grid of cells per tile.
+func _draw_roof_panels(p: Vector2, size: Vector2i, a: float) -> void:
+	var r := Rect2(p + Vector2(2, 3), Vector2(size) * TILE - Vector2(4, 6))
+	draw_rect(r, Color(0.75, 0.75, 0.78, a))
+	draw_rect(r.grow(-2), Color(0.15, 0.25, 0.5, a))
+	var line := Color(0.4, 0.55, 0.85, a)
+	for k in range(1, size.x * 3):
+		var x := r.position.x + k * r.size.x / (size.x * 3.0)
+		draw_line(Vector2(x, r.position.y + 2), Vector2(x, r.end.y - 2), line)
+	for k in range(1, size.y * 2):
+		var y := r.position.y + k * r.size.y / (size.y * 2.0)
+		draw_line(Vector2(r.position.x + 2, y), Vector2(r.end.x - 2, y), line)
 
 
 func _draw_roof_ac(p: Vector2, a: float) -> void:  # because it's Calizona
@@ -2301,8 +2353,9 @@ func _describe_hover() -> String:
 	var lines := []
 	if view_level == 1:
 		if roof_objects.has(t):
-			lines.append(_tool_by_id(roof_objects[t]).name)
-			lines.append_array(_effects(roof_objects[t]))
+			var rid: String = roof_objects[roof_parts.get(t, t)]
+			lines.append(_tool_by_id(rid).name)
+			lines.append_array(_effects(rid))
 		elif room_of.has(t):
 			lines.append("Roof")
 	else:
@@ -2704,6 +2757,6 @@ func _draw_preview() -> void:
 		if tool.id == "demolish" and not ok:
 			c = Color(1, 1, 1, 0.15)
 		draw_rect(Rect2(Vector2(t) * size, Vector2(size, size)), c)
-	var foot := Vector2(GENERATORS[tool.id].size) if GENERATORS.has(tool.id) else Vector2.ONE
+	var foot := Vector2(_footprint(tool.id, Vector2i.ZERO).back() + Vector2i.ONE)
 	draw_rect(Rect2(Vector2(_cursor()) * size, foot * size), Color(1, 1, 1, 0.8), false, 2.0)
 	draw_set_transform(Vector2.ZERO)
