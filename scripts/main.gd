@@ -7,7 +7,7 @@ extends Node2D
 
 const TILE := 32
 const SUB := TILE / 2  # each tile splits into a 2x2 subgrid for small, precisely placed items
-const PERSON_SCALE := 0.6  # staff are drawn this size so each fits in one subgrid square
+const PERSON_SCALE := 0.8  # staff are drawn this size so each fits in one subgrid square
 const WALL_H := 30.0  # how tall walls look in the three-quarter view
 const GRID_W := 64
 const GRID_H := 48
