@@ -50,6 +50,7 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 | Large Diesel ($90,000, 3x1) | 200 kW | $1.40/kWh | high |
 | Portable Power Plant ($600,000, 6x2) | 800 kW | $0.90/kWh | half |
 
+- Solar Panels on the ground, outdoors, no smog, daytime only: Small 1x1 (2 kW, $8,000), Medium 2x1 (4.5 kW, $17,000), Large 3x2 (14 kW, $50,000). The rooftop Solar Panel (2 kW) still goes on roofs.
 - Generators and the grid hookup go outdoors. Short on power, racks and ACs all run at the share that's covered (a brownout).
 - Pollution is 0-100 per tile (the Power panel shows the worst tile). Generators puff smog onto their tile, and it drifts to neighbouring tiles and slowly clears. A faint haze shows always; the Power panel tints it brown.
 - Fuel and grid costs are added to the daily burn.

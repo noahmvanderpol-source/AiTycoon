@@ -20,6 +20,12 @@ const SEVERANCE_DAYS := 5
 # Short on power? Racks and coolers all run at the fraction that's covered.
 const RACK_KW := 6.0
 const SOLAR_KW := 2.0  # a rooftop Solar Panel at noon
+# Solar panels on the ground, outdoors. kw: output at noon. size: tiles wide and deep.
+const SOLAR_ARRAYS := {
+	"solar_s": {"kw": 2.0, "size": Vector2i(1, 1)},
+	"solar_m": {"kw": 4.5, "size": Vector2i(2, 1)},
+	"solar_l": {"kw": 14.0, "size": Vector2i(3, 2)},
+}
 const SUN := [0.0, 0.0, 0.5, 1.0, 1.0, 0.5, 0.0, 0.0]  # by step of the day, midnight first
 const HOURS_PER_STEP := 3.0
 # Generators sit outside. size: tiles wide and deep, placed from the top-left tile. fuel: $ per kWh made. smog: pollution per kWh, puffed out on their tile.
@@ -129,6 +135,9 @@ const TOOLS := [
 	{"id": "power_plant", "name": "Portable Power Plant", "layer": "object", "cost": 600000, "drag": "paint", "menu": "power"},
 	{"id": "battery", "name": "Battery", "layer": "object", "cost": 30000, "drag": "paint", "menu": "power"},
 	{"id": "grid", "name": "Grid Hookup", "layer": "object", "cost": 50000, "drag": "single", "menu": "power"},
+	{"id": "solar_s", "name": "Small Solar Panel", "layer": "object", "cost": 8000, "drag": "paint", "menu": "power"},
+	{"id": "solar_m", "name": "Medium Solar Panel", "layer": "object", "cost": 17000, "drag": "paint", "menu": "power"},
+	{"id": "solar_l", "name": "Large Solar Panel", "layer": "object", "cost": 50000, "drag": "single", "menu": "power"},
 	{"id": "demolish", "name": "Demolish", "layer": "", "cost": 0, "drag": "fill"},
 ]
 
@@ -603,11 +612,11 @@ func _update_power_tab() -> void:
 	for n in gens:
 		gen_lines.append("%d x %s" % [gens[n], n])
 	var bats := objects.values().count("battery")
-	power_label.text = ("Demand: %d kW   Covered: %d%%\n%s\n\nSolar: %d kW (%d panels)\nGrid: %s\nBatteries: %s\nGenerators: %d kW\n%s\n\n"
+	power_label.text = ("Demand: %d kW   Covered: %d%%\n%s\n\nSolar: %d kW (%d roof panels, %d on the ground)\nGrid: %s\nBatteries: %s\nGenerators: %d kW\n%s\n\n"
 		+ "Power bill yesterday: %s\nPollution: %d/100\n\n"
 		+ "Cheapest power runs first: sun, grid, batteries, then generators by fuel price. Fuel generators go outside and their smog drifts across the map (tinted brown here). "
 		+ "Batteries store spare solar for the night. One grid hookup, capped at %d kW until you lobby for more. Solar Panels go on roofs (Build, R).") % [
-		st.demand, int(power_ratio * 100.0), "Daytime" if SUN[_power_step] > 0.0 else "Night", st.solar, roof_objects.values().count("solar"),
+		st.demand, int(power_ratio * 100.0), "Daytime" if SUN[_power_step] > 0.0 else "Night", st.solar, roof_objects.values().count("solar"), objects.values().filter(func(o): return SOLAR_ARRAYS.has(o)).size(),
 		("%d of %d kW" % [st.grid, GRID_KW]) if objects.values().has("grid") else "not connected",
 		("%d, %d of %d kWh" % [bats, battery_charge, bats * BATTERY_KWH]) if bats > 0 else "none",
 		st.gens, "\n".join(gen_lines) if not gen_lines.is_empty() else "none", _money(power_bill), _pollution(), GRID_KW]
@@ -958,7 +967,7 @@ func _can_place(id: String, t: Vector2i) -> bool:
 			return wall_tiles.get(t) != "door" and not window_objects.has(t) and not objects.has(t) and _subs_in(t).is_empty()
 		"solar", "ac":
 			return _roofed(t) and not roof_objects.has(t)
-		"gen_portable", "gen_diesel", "gen_large", "power_plant", "grid":  # outdoors only, bro. Fumes.
+		"gen_portable", "gen_diesel", "gen_large", "power_plant", "grid", "solar_s", "solar_m", "solar_l":  # outdoors only, bro. Fumes.
 			if id == "grid" and objects.values().has("grid"):
 				return false
 			for f in _footprint(id, t):
@@ -977,7 +986,11 @@ func _can_place(id: String, t: Vector2i) -> bool:
 
 # Tiles an object covers when its top-left tile is t.
 func _footprint(id: String, t: Vector2i) -> Array:
-	var size: Vector2i = GENERATORS[id].size if GENERATORS.has(id) else Vector2i.ONE
+	var size := Vector2i.ONE
+	if GENERATORS.has(id):
+		size = GENERATORS[id].size
+	elif SOLAR_ARRAYS.has(id):
+		size = SOLAR_ARRAYS[id].size
 	var out := []
 	for x in size.x:
 		for y in size.y:
@@ -1414,7 +1427,11 @@ func _tick_power() -> void:
 	var demand := _power_demand()
 	var need := demand
 	var h := HOURS_PER_STEP
-	var solar: float = roof_objects.values().count("solar") * SOLAR_KW * SUN[_power_step]
+	var solar: float = roof_objects.values().count("solar") * SOLAR_KW
+	for t in objects:
+		if SOLAR_ARRAYS.has(objects[t]):
+			solar += SOLAR_ARRAYS[objects[t]].kw
+	solar *= SUN[_power_step]
 	var used_solar := minf(solar, need)
 	need -= used_solar
 	var bat_cap := objects.values().count("battery") * BATTERY_KWH
@@ -1945,6 +1962,34 @@ func _draw_power_plant(p: Vector2, t: Vector2i) -> void:
 	for x in [24, 72, 120, 168]:
 		draw_circle(p + Vector2(x, 60), 5, Color(0.1, 0.1, 0.1))  # trailer wheels
 	draw_string(ThemeDB.fallback_font, p + Vector2(10, 46), "TEMPORARY*", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.3, 0.3, 0.35))
+
+
+func _draw_solar_s(p: Vector2, _t: Vector2i) -> void:
+	_draw_solar_array(p, Vector2i(1, 1))
+
+
+func _draw_solar_m(p: Vector2, _t: Vector2i) -> void:
+	_draw_solar_array(p, Vector2i(2, 1))
+
+
+func _draw_solar_l(p: Vector2, _t: Vector2i) -> void:
+	_draw_solar_array(p, Vector2i(3, 2))
+
+
+# Tilted panels on posts, one row of cells per tile.
+func _draw_solar_array(p: Vector2, size: Vector2i) -> void:
+	var w := size.x * TILE
+	for row in size.y:
+		var y := p.y + row * TILE
+		_ellipse(Vector2(p.x + w / 2.0, y + 28), w / 2.0 - 2, 3, Color(0, 0, 0, 0.2))
+		for x in [6, w - 8]:
+			draw_rect(Rect2(Vector2(p.x + x, y + 14), Vector2(2, 14)), Color(0.45, 0.45, 0.48))  # posts
+		draw_rect(Rect2(Vector2(p.x + 2, y + 2), Vector2(w - 4, 16)), Color(0.75, 0.75, 0.78))  # frame
+		draw_rect(Rect2(Vector2(p.x + 3, y + 3), Vector2(w - 6, 14)), Color(0.15, 0.25, 0.5))
+		for k in range(1, size.x * 3):
+			var cx := p.x + 3 + k * (w - 6) / (size.x * 3.0)
+			draw_line(Vector2(cx, y + 3), Vector2(cx, y + 17), Color(0.4, 0.55, 0.85))
+		draw_line(Vector2(p.x + 3, y + 10), Vector2(p.x + w - 3, y + 10), Color(0.4, 0.55, 0.85))
 
 
 func _draw_battery(p: Vector2, _t: Vector2i) -> void:
