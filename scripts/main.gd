@@ -45,16 +45,19 @@ const BATTERY_KW := 50.0
 # Pollution drifts to neighbouring tiles each step and slowly clears.
 const SMOG_SPREAD := 0.5
 const SMOG_DECAY := 0.015
-# Heat. Each room (building) has one temperature in Fahrenheit (this is America, bro).
-# Racks heat their room, bigger rooms take longer to heat, and a building only leaks a
-# little back toward room temperature, so an uncooled server room keeps getting hotter.
+# Heat. Every indoor tile has its own temperature in Fahrenheit (this is America, bro).
+# Racks heat their own tile and the heat radiates out to neighbouring tiles. Walls slow it
+# down (better walls more), the desert seeps in through them, and tiles only drift slowly
+# back to room temperature, so an uncooled server room keeps getting hotter.
 const INDOOR_TEMP := 72.0
 const OUTDOOR_TEMP := 95.0  # Calizona, in the shade, of which there is none
 const MAX_TEMP := 150.0
 const HEAT_STEPS_PER_DAY := 8
-const RACK_HEAT := 12.0  # heat a rack adds each step, spread over the room's floor tiles
+const RACK_HEAT := 12.0  # degrees a rack adds to its own tile each step
+const HEAT_SPREAD := 0.2  # share of the difference that flows to each open neighbour per pass
+const HEAT_PASSES := 4  # spreading passes per step, so heat crosses a room in days, not months
+const WALL_CONDUCT := 0.004  # flow through a wall per pass, before insulation
 # Outside heat seeps in through the walls; insulation cuts that by a percentage.
-const OUTSIDE_LEAK := 0.004
 const WALLS := {  # exterior wall tiers
 	"wall": {"insulation": 0.0, "top": Color(0.5, 0.48, 0.47), "front": Color(0.3, 0.29, 0.32)},
 	"wall_brick": {"insulation": 0.3, "top": Color(0.6, 0.38, 0.3), "front": Color(0.45, 0.25, 0.2)},
@@ -66,20 +69,20 @@ const GEN_GROUND := {
 	"gen_large": ["asphalt", "concrete"],
 	"power_plant": ["asphalt", "concrete"],
 }
-const HEAT_LEAK := 0.01  # how fast a building drifts back to room temperature on its own
+const HEAT_LEAK := 0.01  # how fast a tile drifts back to room temperature on its own
 const RACK_SAFE_TEMP := 85.0  # racks throttle above this
 const RACK_THROTTLE := 0.015  # compute lost per degree over, down to RACK_MIN_OUTPUT
 const RACK_MIN_OUTPUT := 0.2
 const COMFORT_TEMP := 76.0  # staff slow down above this
 const CARPET_BONUS := 0.03  # staff on carpet work a little better
 const HEAT_PRODUCTIVITY_LOSS := 0.02  # productivity lost per degree over, down to 20%
-# Cooling equipment on the roof. Each removes `cooling` heat a step (same units as RACK_HEAT)
-# from the room below, never below `target`, and draws `power` kW.
+# Cooling equipment. Each removes `cooling` heat a step (same units as RACK_HEAT), shared over
+# the indoor tiles within `radius` of it, never below `target`, and draws `power` kW.
 # Window ACs hang on a wall and cancel out about one rack. Rooftop AC Units cancel out about 4.
 # New coolers (chillers, heat pumps, water cooling) go here.
 const COOLERS := {
-	"window_ac": {"name": "Window AC", "cooling": 15.0, "target": 66.0, "power": 2.0},  # power in kW
-	"ac": {"name": "AC Unit", "cooling": 50.0, "target": 64.0, "power": 5.0},
+	"window_ac": {"name": "Window AC", "cooling": 15.0, "target": 66.0, "power": 2.0, "radius": 1},  # power in kW
+	"ac": {"name": "AC Unit", "cooling": 50.0, "target": 64.0, "power": 5.0, "radius": 3},
 }
 # Deviation, 0-100. Each rack adds 1 a year. Modifiers raise or lower that rate by a percentage,
 # and counter-measures take a flat amount a year back off. Each threshold brings worse surprises;
@@ -302,6 +305,8 @@ var view_level := 0
 var roof_objects := {}  # Vector2i -> "solar" / "ac", things built on roofs
 var window_objects := {}  # wall Vector2i -> "window_ac", things hung on walls
 var room_of := {}  # Vector2i -> index into buildings, for every tile under a roof
+var heat := PackedFloat32Array()  # temperature per tile, GRID_W * GRID_H; only indoor floor tiles change
+var heat_cells: Array[Vector2i] = []  # the indoor floor tiles (doors included)
 var _heat_timer := 0.0
 var _heat_warned := false
 var buildings := []  # [{tiles: {Vector2i: true}, alpha}] each enclosed room gets a roof
@@ -384,6 +389,8 @@ var _speed_before_modal := 1
 func _ready() -> void:
 	rng.seed = 42
 	smog.resize(GRID_W * GRID_H)
+	heat.resize(GRID_W * GRID_H)
+	heat.fill(OUTDOOR_TEMP)
 	_build_starter_office()
 	astar.region = Rect2i(0, 0, GRID_W, GRID_H)
 	astar.cell_size = Vector2(TILE, TILE)
@@ -425,7 +432,7 @@ func _build_starter_office() -> void:
 	objects[Vector2i(34, 19)] = "rack"
 	objects[Vector2i(34, 20)] = "rack"
 	objects[Vector2i(25, 25)] = "ficus"
-	roof_objects[Vector2i(30, 21)] = "ac"
+	roof_objects[Vector2i(33, 20)] = "ac"  # right over the racks
 	objects[Vector2i(37, 24)] = "gen_portable"  # round the side, humming
 
 
@@ -562,7 +569,7 @@ const GUIDE := [
 	["Models (M)", "Server Racks make compute. Pick a model size to train; bigger models take longer and raise capability more. Better models bring more users, and users bring revenue. Cutting corners trains faster but raises Deviation. Engineers add compute."],
 	["Staff (T)", "Hire researchers, engineers, marketers and alignment researchers, then give each a job. You don't control people directly: they need a free desk or rack for their job, and heat makes them slower."],
 	["Board (O)", "Each quarter the board sets a target. Hit it for +15 confidence, miss it for -25. At 0% you're fired, and running out of money gets you fired faster. Safety theater fools them for a while."],
-	["Heat (H)", "Racks heat the room they're in. Hot racks throttle and hot staff slow down. An AC Unit on the room's roof cancels out about 4 racks; a Window AC on a wall handles about one. Bigger rooms heat up slower. Rooms are tinted by temperature while the Heat panel is open."],
+	["Heat (H)", "Racks heat their own tile and the heat radiates out across the room. Walls slow it and keep some desert heat out (better walls more). Hot racks throttle and hot staff slow down. An AC Unit on the roof cools a 7x7 area and cancels out about 4 racks; a Window AC on a wall cools the 3x3 next to it and handles about one. Put coolers near the racks. Tiles are tinted by temperature while the Heat panel is open."],
 	["Power (P)", "Racks, ACs and red-team rigs use power. The cheapest power runs first: solar, then the grid, then batteries, then generators by fuel price. Batteries store spare solar for the night. The grid hookup is capped until you lobby for more. Generators go outside, and their smog drifts across the map."],
 	["Deviation (V)", "Every rack adds Deviation, and training, cutting corners and smarter models raise the rate. Alignment researchers at desks and Red-Team Rigs bring it back down (rigs eat compute). At 25% the AI gets quirky, at 50% it sabotages rivals for you and scandals follow, at 75% it hides compute, lies on reports and staff quit. At 100% it takes over."],
 	["Research (E)", "Researchers at desks make research points; the founders make a trickle on their own. Pick a project in each of four branches: Construction, Equipment, Computer Chips and Productivity. Each branch is researched in order. Projects unlock new things in Build or give a lasting bonus. Points keep banking while nothing is picked."],
@@ -908,7 +915,8 @@ func _update_heat_tab() -> void:
 		if COOLERS.has(c[1]):
 			cool_power += COOLERS[c[1]].power
 	heat_label.text = ("Rooms:\n%s\n\nRack compute lost to heat: %.1f of %d\nStaff productivity: %d%%\nCooling power: %d kW\n\n"
-		+ "Raised by: racks\nLowered by: AC Units, Window ACs, bigger rooms") % [
+		+ "Heat radiates out from racks. Coolers chill the area around them, so put them near the racks.\n"
+		+ "Raised by: racks, the desert through thin walls\nLowered by: AC Units, Window ACs, insulated walls") % [
 		"\n".join(lines) if not lines.is_empty() else "none", _racks() - _rack_compute(), _racks(), int(prod * 100.0),
 		cool_power]
 
@@ -2034,7 +2042,15 @@ func _draw_smog(a: Vector2i, b: Vector2i) -> void:
 # --- Heat -------------------------------------------------------------------
 
 func _temp(t: Vector2i) -> float:
-	return buildings[room_of[t]].temp if room_of.has(t) else OUTDOOR_TEMP
+	return heat[t.y * GRID_W + t.x] if _in_bounds(t) else OUTDOOR_TEMP
+
+
+func _set_temp(t: Vector2i, v: float) -> void:
+	heat[t.y * GRID_W + t.x] = clampf(v, 0.0, MAX_TEMP)
+
+
+func _indoor(t: Vector2i) -> bool:
+	return room_of.has(t) and not _is_wall(t)
 
 
 # Every cooler on the map, roof and wall: [[tile, id], ...]
@@ -2052,52 +2068,74 @@ func _heat_view() -> bool:
 	return side_panel.visible and tabs.current_tab == 3
 
 
-# Average insulation of a building's exterior walls (doors count as none).
-func _insulation(bld: Dictionary) -> float:
-	var total := 0.0
-	var n := 0
-	for t in bld.tiles:
-		if wall_tiles.has(t):
-			total += WALLS[wall_tiles[t]].insulation if _is_wall(t) else 0.0
-			n += 1
-	return total / maxi(n, 1)
-
-
 func _tick_heat() -> void:
-	var added := []
-	added.resize(buildings.size())
-	added.fill(0.0)
+	var rack_heat := RACK_HEAT * power_ratio * (1.0 + _research_bonus("rack_heat"))
 	for t in objects:
-		if objects[t] == "rack" and room_of.has(t):
-			added[room_of[t]] += RACK_HEAT * power_ratio * (1.0 + _research_bonus("rack_heat"))
+		if objects[t] == "rack" and _indoor(t):
+			_set_temp(t, _temp(t) + rack_heat)
 	for c in _coolers():
-		var t: Vector2i = c[0]
-		if COOLERS.has(c[1]) and room_of.has(t):
-			added[room_of[t]] -= COOLERS[c[1]].cooling * power_ratio * (1.0 + _research_bonus("cooling"))
-	for i in buildings.size():
-		var bld: Dictionary = buildings[i]
-		var v: float = bld.temp + added[i] / maxi(bld.area, 1)
-		var floor_temp := INDOOR_TEMP  # coolers can't push a room below their target
-		for c in _coolers():
-			var t: Vector2i = c[0]
-			if COOLERS.has(c[1]) and room_of.get(t) == i:
-				floor_temp = minf(floor_temp, COOLERS[c[1]].target)
-		if added[i] < 0.0:
-			v = maxf(v, minf(bld.temp, floor_temp))
-		v += (INDOOR_TEMP - v) * HEAT_LEAK
-		v += (OUTDOOR_TEMP - v) * OUTSIDE_LEAK * (1.0 - _insulation(bld))
-		bld.temp = minf(v, MAX_TEMP)
+		_cool_around(c[0], COOLERS[c[1]])
+	for i in HEAT_PASSES:
+		_spread_heat()
+	for t in heat_cells:
+		_set_temp(t, _temp(t) + (INDOOR_TEMP - _temp(t)) * HEAT_LEAK)
+	for bld in buildings:  # room averages, for the Heat panel and labels
+		var total := 0.0
+		for t in bld.tiles:
+			if not _is_wall(t):
+				total += _temp(t)
+		bld.temp = total / maxi(bld.area, 1)
 	for s in staff:
 		# Productivity starts at 100%. Heat takes a cut; break rooms and the like can add to it later.
-		var over := _temp(Vector2i((s.pos / TILE).floor())) - COMFORT_TEMP
-		var comfy := CARPET_BONUS if floor_tiles.get(Vector2i((s.pos / TILE).floor())) == "carpet" else 0.0
+		var at := Vector2i((s.pos / TILE).floor())
+		var over := _temp(at) - COMFORT_TEMP if _indoor(at) else OUTDOOR_TEMP - COMFORT_TEMP
+		var comfy := CARPET_BONUS if floor_tiles.get(at) == "carpet" else 0.0
 		s.productivity = clampf(1.0 - maxf(over, 0.0) * HEAT_PRODUCTIVITY_LOSS, 0.2, 1.0) + comfy
 	if not _heat_warned:
 		for t in objects:
 			if objects[t] == "rack" and _temp(t) > RACK_SAFE_TEMP + 10.0:
 				_heat_warned = true
-				_chet("Bro, the server room is %d degrees. The racks are thermal throttling. Put an AC Unit on the roof (R in Build). Heat (H) shows the hot rooms." % _temp(t))
+				_chet("Bro, the racks are %d degrees. They're thermal throttling. Put an AC Unit on the roof right over them (R in Build). Heat (H) shows the hot spots." % _temp(t))
 				break
+
+
+# A cooler shares its cooling over the indoor tiles within its radius. On a wall or roof edge
+# that's only the inside tiles, so a Window AC cools the strip of room next to it.
+func _cool_around(at: Vector2i, c: Dictionary) -> void:
+	var tiles := []
+	for dx in range(-c.radius, c.radius + 1):
+		for dy in range(-c.radius, c.radius + 1):
+			var t: Vector2i = at + Vector2i(dx, dy)
+			if _indoor(t) and room_of[t] == room_of.get(at, -1):
+				tiles.append(t)
+	if tiles.is_empty():
+		return
+	var each: float = c.cooling * power_ratio * (1.0 + _research_bonus("cooling")) / tiles.size()
+	for t in tiles:
+		var v := _temp(t)
+		if v > c.target:
+			_set_temp(t, maxf(v - each, c.target))
+
+
+# One pass of heat flow. Open neighbours (floor, doors) trade freely; through a wall a tile
+# trades a little with whatever is on the far side, the desert if it's outside.
+func _spread_heat() -> void:
+	var next := heat.duplicate()
+	for t in heat_cells:
+		var v := _temp(t)
+		var flow := 0.0
+		for d in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+			var n: Vector2i = t + d
+			if _indoor(n):
+				flow += (_temp(n) - v) * HEAT_SPREAD
+			elif _is_wall(n):
+				var far: Vector2i = n + d
+				var other := _temp(far) if _indoor(far) else OUTDOOR_TEMP
+				flow += (other - v) * WALL_CONDUCT * (1.0 - WALLS[wall_tiles[n]].insulation)
+			else:  # an open door or gap to the outside
+				flow += (OUTDOOR_TEMP - v) * WALL_CONDUCT
+		next[t.y * GRID_W + t.x] = clampf(v + flow, 0.0, MAX_TEMP)
+	heat = next
 
 
 func _heat_color(f: float) -> Color:
@@ -2109,11 +2147,8 @@ func _heat_color(f: float) -> Color:
 
 
 func _draw_heat_tint() -> void:
-	for bld in buildings:
-		var c := _heat_color(bld.temp)
-		for t in bld.tiles:
-			if not _is_wall(t):
-				draw_rect(Rect2(Vector2(t) * TILE, Vector2(TILE, TILE)), c)
+	for t in heat_cells:
+		draw_rect(Rect2(Vector2(t) * TILE, Vector2(TILE, TILE)), _heat_color(_temp(t)))
 
 
 func _draw_rack_temps() -> void:
@@ -2184,15 +2219,31 @@ func _find_buildings() -> void:
 			for t in tiles:
 				if not _is_wall(t):
 					area += 1
-			# A room keeps its temperature through rebuilds; brand new rooms start at room temperature.
-			var temp := INDOOR_TEMP
-			if room_of.has(start) and room_of[start] < old.size():
-				temp = old[room_of[start]].temp
-			buildings.append({"tiles": tiles, "alpha": alpha, "area": area, "temp": temp})
+			buildings.append({"tiles": tiles, "alpha": alpha, "area": area, "temp": INDOOR_TEMP})
+	var was_indoor := {}
+	for t in heat_cells:
+		was_indoor[t] = true
 	room_of = {}
 	for i in buildings.size():
 		for t in buildings[i].tiles:
 			room_of[t] = i
+	# Tiles keep their temperature through rebuilds; newly enclosed ones start at room temperature,
+	# and anything outdoors is the desert.
+	heat_cells = []
+	for t in room_of:
+		if not _is_wall(t):
+			heat_cells.append(t)
+			if not was_indoor.has(t):
+				_set_temp(t, INDOOR_TEMP)
+	for t in was_indoor:
+		if not _indoor(t):
+			_set_temp(t, OUTDOOR_TEMP)
+	for bld in buildings:
+		var total := 0.0
+		for t in bld.tiles:
+			if not _is_wall(t):
+				total += _temp(t)
+		bld.temp = total / maxi(bld.area, 1)
 	for t in window_objects.keys():  # the wall left the building
 		if not _roofed(t) or not _is_wall(t):
 			money += int(_tool_by_id(window_objects[t]).cost / 2)
@@ -2329,20 +2380,22 @@ func _describe_hover() -> String:
 			lines.append_array(_effects(wall_tiles[t]))
 		elif floor_tiles.has(t):
 			lines.append(_tool_by_id(floor_tiles[t]).name + " floor")
-	if room_of.has(t):
-		lines.append("Room: %d°F" % int(buildings[room_of[t]].temp))
+	if _indoor(t):
+		lines.append("Here: %d°F, room average %d°F" % [int(_temp(t)), int(buildings[room_of[t]].temp)])
 	return "\n".join(lines)
 
 
 # What a kind of thing does to heat, cooling, power and smog, for its tooltip.
 func _effects(id: String) -> Array:
 	if id == "rack":
-		return ["Heat: +%.1f to its room" % (RACK_HEAT * (1.0 + _research_bonus("rack_heat"))),
+		return ["Heat: +%.1f a step, radiating out" % (RACK_HEAT * (1.0 + _research_bonus("rack_heat"))),
 			"Power: uses %.1f kW" % (RACK_KW * (1.0 + _research_bonus("rack_power")))]
 	if WALLS.has(id):
 		return ["Insulation: %d%%" % int(WALLS[id].insulation * 100.0)]
 	if COOLERS.has(id):
-		return ["Cooling: %d" % int(COOLERS[id].cooling * (1.0 + _research_bonus("cooling"))), "Power: uses %d kW" % COOLERS[id].power]
+		var side: int = COOLERS[id].radius * 2 + 1
+		return ["Cooling: %d over a %dx%d area" % [int(COOLERS[id].cooling * (1.0 + _research_bonus("cooling"))), side, side],
+			"Power: uses %d kW" % COOLERS[id].power]
 	if SOLAR_ARRAYS.has(id):
 		return ["Power: makes up to %.1f kW in the sun" % SOLAR_ARRAYS[id].kw, "Smog: none"]
 	if GENERATORS.has(id):
