@@ -65,6 +65,7 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 - Three politicians: the Governor, the Utilities Commissioner and the Water Board Chair. Each has a donation price, a pet issue (Jobs, Clean Air, Big Donors or Innovation), a **Favor** meter and a **Scandal** meter (0-100).
 - Donating raises Favor by 20 and Scandal by 8. Favor drifts down 0.3 a day, rises 0.1 a day while their pet issue is going your way and falls 0.6 a day while it isn't. At 100 Scandal they resign; the replacement starts at 0 Favor.
 - The **State Legislature** handles general lobbying ($15,000 for +10 Favor, no scandals; its pet issue is Public Mood, which sours with Outrage). It passes **AI-Friendly Regulation** (Scrutiny rises half as fast) and a **Tech Tax Break** (10% of the daily burn back).
+- Every lobbying price (donations and ask fees) goes up 25% a year; the page header shows how far prices have risen.
 - Spend Favor on: **Grid Hookup Permit** (+40 kW grid cap, up to 4), **State AI Contract** ($1,000 a day for two quarters) and **Water Rights** (+50 acre-feet a year, used once water cooling arrives).
 - Meters: **Influence** (average Favor), **Outrage** (from the world map) and **Scrutiny** (raised by Outrage, Deviation and scandals, lowered by Influence). From 50 Scrutiny you're fined each quarter; at 75 the state pulls your contract.
 - Graphs: Influence, Outrage and Scrutiny over the last 6 months, and lobbying spend against contract income per quarter.
