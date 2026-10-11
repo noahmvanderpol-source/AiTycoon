@@ -130,6 +130,13 @@ const JOB_ORDER := ["research", "engineering", "growth", "alignment", "none"]
 const ENG_SLOTS := 5
 const ENG_RADIUS := 4.0
 const ENG_RACK_BONUS := 0.5
+# Wear and tear: every rack has a 0-100 condition that scales its output. Racks nobody maintains lose
+# RACK_WEAR a day, down to RACK_MIN_COND. Each engineer at a workstation maintains up to
+# ENG_MAINT_RACKS racks in its radius, restoring RACK_REPAIR a day.
+const RACK_WEAR := 0.5
+const RACK_REPAIR := 5.0
+const RACK_MIN_COND := 25.0
+const ENG_MAINT_RACKS := 4
 const FIRST_NAMES := ["Brayden", "Priya", "Skyler", "Dmitri", "Kai", "Megan", "Tobias", "Aiko", "Jaxon",
 	"Fatima", "Chad", "Lena", "Rohan", "Sienna", "Mateo", "Zoe", "Gunnar", "Imani", "Theo", "Wren"]
 const NO_SEAT := Vector2i(-1, -1)
@@ -289,6 +296,7 @@ var game_over := false
 var deviation := 0.0
 var dev_level := 0  # thresholds already announced: 1 = 25%, 2 = 50%, 3 = 75%
 var rival_sabotage := 0  # capability the AI has quietly knocked off the top rival
+var rack_cond := {}  # Vector2i -> rack condition 0-100 (missing = 100)
 var rack_names := {}  # Vector2i -> nickname the AI gave a rack
 var theater_quarter := -1  # last quarter a safety blog post went out
 var tension := false
@@ -581,7 +589,7 @@ const GUIDE := [
 	["Getting started", "You run an AI startup in Calizona. Train models to get users, users bring revenue, and keep the board happy until your AI is smart enough to replace you as CEO. You win? If the board loses all confidence you're fired. If Deviation hits 100% the AI takes over."],
 	["Building (B)", "Open Build and pick a category tab (Tab cycles them). Left drag to build: floors fill a box, walls draw a box outline, furniture paints, doors place one at a time. Right click demolishes for a 50% refund. Furniture needs a floor. Staff walk only on floors and through doors. Exterior walls come in three tiers: Cheap, Brick (30% insulation) and Insulated (60%); insulation keeps the desert heat out. Build a better wall over an old one to upgrade it. Carpet goes on concrete and gives staff standing on it +3% productivity. Interior Walls take a quarter tile and block walking. Generators need ground: the Portable one goes anywhere, the Diesel needs gravel or better, and the Large Diesel and Power Plant need asphalt or concrete."],
 	["Roofs and views (R)", "Every enclosed building gets a roof that hides while your mouse is inside it. R switches between Ground and Roof view. Rooftop items like AC Units and Solar Panels switch to Roof view by themselves when you pick them."],
-	["Models (M)", "Server Racks make compute. Pick a model size to train; bigger models take longer and raise capability more. Better models bring more users, and users bring revenue. Cutting corners trains faster but raises Deviation. Engineers at an Engineer's Workstation add compute for racks within its radius."],
+	["Models (M)", "Server Racks make compute. Pick a model size to train; bigger models take longer and raise capability more. Better models bring more users, and users bring revenue. Cutting corners trains faster but raises Deviation. Engineers at an Engineer's Workstation add compute for racks within its radius. Racks wear down without engineers: each engineer maintains up to 4 racks in range, and a worn rack makes less compute."],
 	["Staff (T)", "Hire researchers, engineers, marketers and alignment researchers, then give each a job. You don't control people directly: they need a free desk, or a spot at an Engineer's Workstation, for their job, and heat makes them slower."],
 	["Board (O)", "Click your company name in the top bar (or press O) for the Company page. Its Board tab: each quarter the board sets a target. Hit it for +15 confidence, miss it for -25. At 0% you're fired, and running out of money gets you fired faster. Safety theater fools them for a while."],
 	["Heat (H)", "Racks heat the room they're in. Hot racks throttle and hot staff slow down. An AC Unit on the room's roof cancels out about 4 racks; a Window AC on a wall handles about one. Bigger rooms heat up slower. Rooms are tinted by temperature while the Heat panel is open."],
@@ -1627,6 +1635,7 @@ func _new_day() -> void:
 	_tick_users()
 	_tick_rivals()
 	_tick_deviation()
+	_tick_wear()
 	if game_over:
 		return
 	if money < 0:
@@ -1678,7 +1687,48 @@ func _rack_compute() -> float:
 
 func _rack_output(t: Vector2i) -> float:
 	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * power_ratio \
-		* (1.0 + _research_bonus("compute"))
+		* (1.0 + _research_bonus("compute")) * _rack_cond(t) / 100.0
+
+
+func _rack_cond(t: Vector2i) -> float:
+	return rack_cond.get(t, 100.0)
+
+
+# Racks the engineers get to today: each engineer covers ENG_MAINT_RACKS racks in their
+# workstation's radius, nearest first.
+func _maintained_racks() -> Dictionary:
+	var done := {}
+	for st in objects:
+		if objects[st] != "eng_station":
+			continue
+		var crew := 0.0
+		for s in staff:
+			if s.working and s.job == "engineering" and s.seat == st:
+				crew += (1.0 if s.role == "engineer" else 0.5) * s.productivity
+		var slots := int(ceilf(crew * ENG_MAINT_RACKS))
+		var near: Array = objects.keys().filter(func(r): return objects[r] == "rack" and _in_eng_radius(st, r) and not done.has(r))
+		near.sort_custom(func(a, b): return Vector2(a - st).length() < Vector2(b - st).length())
+		for r in near.slice(0, slots):
+			done[r] = true
+	return done
+
+
+func _tick_wear() -> void:
+	var fixed := _maintained_racks()
+	var worn := 0
+	for t in objects:
+		if objects[t] != "rack":
+			continue
+		var c := _rack_cond(t)
+		c = minf(c + RACK_REPAIR, 100.0) if fixed.has(t) else maxf(c - RACK_WEAR, RACK_MIN_COND)
+		rack_cond[t] = c
+		if c < 60.0:
+			worn += 1
+	for t in rack_cond.keys():  # forget racks that were demolished
+		if objects.get(t) != "rack":
+			rack_cond.erase(t)
+	if worn > 0 and day % 15 == 0:
+		_chet("%d rack%s held together with zip ties. Put engineers at a Workstation near them, bro." % [worn, "" if worn == 1 else "s"])
 
 
 # Compute is spent in this order: red-team rigs, then whatever the AI hides at 75%, then training.
@@ -2490,6 +2540,7 @@ func _describe_hover() -> String:
 				if rack_names.has(t) and deviation >= 25.0:
 					lines[0] += ' "%s"' % rack_names[t]
 				lines.append("Output: %d%%" % int(_rack_output(t) * 100.0))
+				lines.append("Condition: %d%%%s" % [int(_rack_cond(t)), "" if _maintained_racks().has(t) else " (no engineer)"])
 			lines.append_array(_effects(id))
 		elif sub != "":
 			lines.append(_tool_by_id(sub).get("name", sub.capitalize()))
@@ -2523,7 +2574,8 @@ func _effects(id: String) -> Array:
 	match id:
 		"eng_station":
 			return ["Up to %d engineers work within %d tiles" % [ENG_SLOTS, int(ENG_RADIUS)],
-				"Each tends a rack in range: +%.1f compute" % ENG_RACK_BONUS]
+				"Each tends a rack in range: +%.1f compute" % ENG_RACK_BONUS,
+				"Each maintains up to %d racks in range" % ENG_MAINT_RACKS]
 		"redteam":
 			return ["Power: uses %d kW" % REDTEAM_KW, "Eats %.1f compute a day" % REDTEAM_COMPUTE, "Deviation: -%.1f a year" % REDTEAM_ALIGN]
 		"solar":
@@ -2724,6 +2776,11 @@ func _draw_rack(p: Vector2, t: Vector2i) -> void:
 		var on := _hash(t, i * 1000 + tick) % 3 != 0
 		var lit := Color(1.0, 0.25, 0.2) if deviation >= 50.0 else Color(0.3, 1.0, 0.5)
 		draw_rect(Rect2(Vector2(p.x + 23, y), Vector2(3, 3)), lit if on else lit.darkened(0.7))
+	var cond := _rack_cond(t)
+	if cond < 100.0:  # condition bar: green when fine, orange then red as it wears
+		var col := Color(0.4, 0.9, 0.4) if cond >= 75.0 else (Color(1.0, 0.65, 0.2) if cond >= 50.0 else Color(1.0, 0.3, 0.25))
+		draw_rect(Rect2(p + Vector2(4, -19), Vector2(24, 3)), Color(0, 0, 0, 0.5))
+		draw_rect(Rect2(p + Vector2(4, -19), Vector2(24.0 * cond / 100.0, 3)), col)
 
 
 func _draw_eng_station(p: Vector2, t: Vector2i) -> void:
