@@ -272,6 +272,7 @@ const RESEARCH := [
 		"desc": "Staff 15% more productive. Nobody takes it."},
 ]
 const UNLOCK_ALL := true  # testing: every Build item is available without research. Set false to lock them.
+const INFINITE_MONEY := true  # testing: money stays topped up at $1B, so nothing is unaffordable. Set false for the real $100k start.
 const RESEARCH_BASE := 1.0  # research points a day the founders scrape together on their own
 const RESEARCH_PER_WORKER := 1.0  # extra points a day per researcher at a desk
 
@@ -1295,6 +1296,8 @@ func _money(v: int) -> String:
 # --- Loop and input ---------------------------------------------------------
 
 func _process(delta: float) -> void:
+	if INFINITE_MONEY:
+		money = maxi(money, 1_000_000_000)
 	_time += delta
 	var dir := Vector2.ZERO
 	if modal:
