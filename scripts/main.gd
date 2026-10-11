@@ -54,10 +54,11 @@ const COMFORT_TEMP := 76.0  # staff slow down above this
 const HEAT_PRODUCTIVITY_LOSS := 0.02  # productivity lost per degree over, down to 20%
 # Cooling equipment on the roof. Each removes `cooling` heat a step (same units as RACK_HEAT)
 # from the room below, never below `target`, and draws `power` kW.
-# The AC is the starter: it cancels out less than 2 racks and costs most of a rack's power bill.
+# Window ACs hang on a wall and cancel out about one rack. Rooftop AC Units cancel out about 4.
 # New coolers (chillers, heat pumps, water cooling) go here.
 const COOLERS := {
-	"ac": {"name": "AC Unit", "cooling": 21.0, "target": 64.0, "power": 4.0},  # power in kW
+	"window_ac": {"name": "Window AC", "cooling": 15.0, "target": 66.0, "power": 2.0},  # power in kW
+	"ac": {"name": "AC Unit", "cooling": 50.0, "target": 64.0, "power": 5.0},
 }
 const REVENUE_PER_USER := 0.05  # dollars per user per day
 const WIN_CAPABILITY := 100
@@ -120,7 +121,8 @@ const TOOLS := [
 	{"id": "ficus", "name": "Ficus", "layer": "object", "cost": 300, "drag": "paint"},
 	{"id": "coffee", "name": "Coffee Maker", "layer": "sub", "cost": 1500, "drag": "paint"},
 	{"id": "solar", "name": "Solar Panel", "layer": "roof", "cost": 8000, "drag": "paint"},
-	{"id": "ac", "name": "AC Unit", "layer": "roof", "cost": 3000, "drag": "paint"},
+	{"id": "window_ac", "name": "Window AC", "layer": "window", "cost": 1200, "drag": "paint"},
+	{"id": "ac", "name": "AC Unit", "layer": "roof", "cost": 4500, "drag": "paint"},
 	{"id": "gen_portable", "name": "Portable Generator", "layer": "object", "cost": 2500, "drag": "paint", "menu": "power"},
 	{"id": "gen_diesel", "name": "Diesel Generator", "layer": "object", "cost": 25000, "drag": "paint", "menu": "power"},
 	{"id": "gen_large", "name": "Large Diesel", "layer": "object", "cost": 90000, "drag": "paint", "menu": "power"},
@@ -182,6 +184,7 @@ var panning := false
 const LEVELS := ["Ground", "Roof"]
 var view_level := 0
 var roof_objects := {}  # Vector2i -> "solar" / "ac", things built on roofs
+var window_objects := {}  # wall Vector2i -> "window_ac", things hung on walls
 var room_of := {}  # Vector2i -> index into buildings, for every tile under a roof
 var _heat_timer := 0.0
 var _heat_warned := false
@@ -563,20 +566,19 @@ func _update_heat_tab() -> void:
 		for t in bld.tiles:
 			if objects.get(t) == "rack":
 				racks += 1
-			if COOLERS.has(roof_objects.get(t, "")):
-				coolers += 1
+			coolers += int(COOLERS.has(roof_objects.get(t, ""))) + int(window_objects.has(t))
 		lines.append("%d°F   %d tiles, %d racks, %d coolers" % [bld.temp, bld.area, racks, coolers])
 	var prod := 0.0
 	for s in staff:
 		prod += s.productivity
 	prod = 1.0 if staff.is_empty() else prod / staff.size()
 	var cool_power := 0
-	for t in roof_objects:
-		if COOLERS.has(roof_objects[t]):
-			cool_power += COOLERS[roof_objects[t]].power
+	for c in _coolers():
+		if COOLERS.has(c[1]):
+			cool_power += COOLERS[c[1]].power
 	heat_label.text = ("Rooms:\n%s\n\nRack compute lost to heat: %.1f of %d\nStaff productivity: %d%%\nCooling power: %d kW\n\n"
 		+ "Racks heat their room. Racks throttle above %d°F, staff slow down above %d°F. "
-		+ "Put AC Units on the room's roof (R in Build). Each one cancels out a bit under 2 racks. Bigger rooms heat up slower.\n\n"
+		+ "Put AC Units on the room's roof (R in Build). Each one cancels out about 4 racks. Window ACs go on walls (B) and handle about one. Bigger rooms heat up slower.\n\n"
 		+ "Rooms are tinted by temperature while this panel is open.") % [
 		"\n".join(lines) if not lines.is_empty() else "none", _racks() - _rack_compute(), _racks(), int(prod * 100.0),
 		cool_power, RACK_SAFE_TEMP, COMFORT_TEMP]
@@ -949,8 +951,10 @@ func _can_place(id: String, t: Vector2i) -> bool:
 			return floor_tiles.get(t) != id
 		"wall":
 			return not wall_tiles.has(t) and not objects.has(t) and _subs_in(t).is_empty()
+		"window_ac":
+			return wall_tiles.get(t) == "wall" and _roofed(t) and not window_objects.has(t)
 		"door":
-			return wall_tiles.get(t) != "door" and not objects.has(t) and _subs_in(t).is_empty()
+			return wall_tiles.get(t) != "door" and not window_objects.has(t) and not objects.has(t) and _subs_in(t).is_empty()
 		"solar", "ac":
 			return _roofed(t) and not roof_objects.has(t)
 		"gen_portable", "gen_diesel", "gen_large", "power_plant", "grid":  # outdoors only, bro. Fumes.
@@ -962,7 +966,7 @@ func _can_place(id: String, t: Vector2i) -> bool:
 		"demolish":
 			if view_level == 1:
 				return roof_objects.has(t)
-			return objects.has(t) or wall_tiles.has(t) or floor_tiles.has(t) or not _subs_in(t).is_empty()
+			return objects.has(t) or wall_tiles.has(t) or window_objects.has(t) or floor_tiles.has(t) or not _subs_in(t).is_empty()
 	# furniture
 	return floor_tiles.has(t) and not wall_tiles.has(t) and not objects.has(t) and _subs_in(t).is_empty()
 
@@ -996,6 +1000,7 @@ func _commit(tiles: Array) -> void:
 			"object": objects[t] = tool.id
 			"sub": sub_objects[t] = tool.id
 			"roof": roof_objects[t] = tool.id
+			"window": window_objects[t] = tool.id
 	_after_build()
 
 
@@ -1006,6 +1011,10 @@ func _demolish(t: Vector2i) -> void:
 		if roof_objects.has(t):
 			money += int(_tool_by_id(roof_objects[t]).cost / 2)
 			roof_objects.erase(t)
+		return
+	if window_objects.has(t):
+		money += int(_tool_by_id(window_objects[t]).cost / 2)
+		window_objects.erase(t)
 		return
 	var subs := _subs_in(t)
 	if not subs.is_empty():
@@ -1368,9 +1377,8 @@ func _update_staff(delta: float) -> void:
 
 func _power_demand() -> float:
 	var kw := _racks() * RACK_KW
-	for t in roof_objects:
-		if COOLERS.has(roof_objects[t]):
-			kw += COOLERS[roof_objects[t]].power
+	for c in _coolers():
+		kw += COOLERS[c[1]].power
 	return kw
 
 
@@ -1470,6 +1478,17 @@ func _temp(t: Vector2i) -> float:
 	return buildings[room_of[t]].temp if room_of.has(t) else OUTDOOR_TEMP
 
 
+# Every cooler on the map, roof and wall: [[tile, id], ...]
+func _coolers() -> Array:
+	var out := []
+	for t in roof_objects:
+		if COOLERS.has(roof_objects[t]):
+			out.append([t, roof_objects[t]])
+	for t in window_objects:
+		out.append([t, window_objects[t]])
+	return out
+
+
 func _heat_view() -> bool:
 	return side_panel.visible and tabs.current_tab == 3
 
@@ -1481,16 +1500,18 @@ func _tick_heat() -> void:
 	for t in objects:
 		if objects[t] == "rack" and room_of.has(t):
 			added[room_of[t]] += RACK_HEAT * power_ratio
-	for t in roof_objects:
-		if COOLERS.has(roof_objects[t]) and room_of.has(t):
-			added[room_of[t]] -= COOLERS[roof_objects[t]].cooling * power_ratio
+	for c in _coolers():
+		var t: Vector2i = c[0]
+		if COOLERS.has(c[1]) and room_of.has(t):
+			added[room_of[t]] -= COOLERS[c[1]].cooling * power_ratio
 	for i in buildings.size():
 		var bld: Dictionary = buildings[i]
 		var v: float = bld.temp + added[i] / maxi(bld.area, 1)
 		var floor_temp := INDOOR_TEMP  # coolers can't push a room below their target
-		for t in roof_objects:
-			if COOLERS.has(roof_objects[t]) and room_of.get(t) == i:
-				floor_temp = minf(floor_temp, COOLERS[roof_objects[t]].target)
+		for c in _coolers():
+			var t: Vector2i = c[0]
+			if COOLERS.has(c[1]) and room_of.get(t) == i:
+				floor_temp = minf(floor_temp, COOLERS[c[1]].target)
 		if added[i] < 0.0:
 			v = maxf(v, minf(bld.temp, floor_temp))
 		v += (INDOOR_TEMP - v) * HEAT_LEAK
@@ -1600,6 +1621,10 @@ func _find_buildings() -> void:
 	for i in buildings.size():
 		for t in buildings[i].tiles:
 			room_of[t] = i
+	for t in window_objects.keys():  # the wall left the building
+		if not _roofed(t) or wall_tiles.get(t) != "wall":
+			money += int(_tool_by_id(window_objects[t]).cost / 2)
+			window_objects.erase(t)
 	for t in roof_objects.keys():  # the roof came down, and so did whatever was on it
 		if not _roofed(t):
 			money += int(_tool_by_id(roof_objects[t]).cost / 2)
@@ -1631,6 +1656,8 @@ func _draw_roof(bld: Dictionary) -> void:
 		if not bld.tiles.has(t + Vector2i.DOWN):
 			draw_line(p + Vector2(0, TILE), p + Vector2(TILE, TILE), edge, 3.0)
 			draw_rect(Rect2(p + Vector2(0, TILE), Vector2(TILE, WALL_H)), Color(0.3, 0.29, 0.32, a))  # wall front below the eaves
+			if window_objects.has(t):
+				_draw_window_ac(p + Vector2(0, WALL_H), a)
 			if wall_tiles.get(t) == "door":  # keep doors visible from outside
 				draw_rect(Rect2(p + Vector2(6, TILE + 4), Vector2(TILE - 12, WALL_H - 4)), Color(0.62, 0.43, 0.25, a))
 				draw_circle(p + Vector2(TILE - 10, TILE + WALL_H * 0.6), 1.5, Color(0.9, 0.8, 0.4, a))
@@ -1647,6 +1674,15 @@ func _draw_roof_solar(p: Vector2, a: float) -> void:
 	for k in 3:
 		draw_line(p + Vector2(4 + 8 * k, 6), p + Vector2(4 + 8 * k, 26), Color(0.4, 0.55, 0.85, a))
 	draw_line(p + Vector2(4, 16), p + Vector2(28, 16), Color(0.4, 0.55, 0.85, a))
+
+
+# A window unit on a wall's front face. p is the wall tile's top-left on the ground.
+func _draw_window_ac(p: Vector2, a: float) -> void:
+	var r := Rect2(p + Vector2(8, TILE - WALL_H + 6), Vector2(16, 12))
+	draw_rect(r, Color(0.85, 0.85, 0.82, a))
+	for k in 3:
+		draw_line(r.position + Vector2(2, 3 + 3 * k), r.position + Vector2(14, 3 + 3 * k), Color(0.45, 0.45, 0.48, a))
+	draw_rect(Rect2(r.position + Vector2(0, 12), Vector2(16, 2)), Color(0.3, 0.6, 0.9, a))  # it drips, obviously
 
 
 func _draw_roof_ac(p: Vector2, a: float) -> void:  # because it's Calizona
@@ -1728,6 +1764,9 @@ func _draw() -> void:
 				_draw_staff(item)
 			elif wall_tiles.get(item) == "wall":
 				_draw_wall(item)
+				if window_objects.has(item):  # on the front face, or the top of a side wall
+					var up := Vector2(0, 8 - TILE) if wall_tiles.has(item + Vector2i.DOWN) else Vector2.ZERO
+					_draw_window_ac(Vector2(item) * TILE + up, 1.0)
 			elif wall_tiles.has(item):
 				_draw_door(item)
 			else:

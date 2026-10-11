@@ -39,7 +39,7 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 - The **Board** tab shows confidence, the current target, progress and days left.
 
 ## Power
-- Racks draw 6 kW each and AC Units 4 kW. Everything is powered 8 times a day (3 hours a step).
+- Racks draw 6 kW each, rooftop AC Units 5 kW and Window ACs 2 kW. Everything is powered 8 times a day (3 hours a step).
 - **Power (P)** opens the power panel and the power build tools. You start with a Portable Generator outside the office.
 - Cheapest power runs first: rooftop Solar Panels (2 kW, daytime only), then one Grid Hookup (40 kW cap, $1.20/kWh), then Batteries (200 kWh, charged by spare solar), then generators by fuel price:
 
