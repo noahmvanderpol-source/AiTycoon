@@ -5,19 +5,19 @@ extends Node2D
 
 const TILE := 32
 const PROP := Rect2i(0, 0, 64, 48)  # your land, the same grid main.gd builds on
-const WORLD := Rect2i(-26, -40, 136, 116)  # the whole map, canal along the top
+const WORLD := Rect2i(-26, -52, 136, 140)  # the whole map, canal along the top
 const SAND := Color(0.84, 0.72, 0.5)
 const TOWN := "Dustwater"
 
 # North
-const CANAL_TOP := -40  # north bank; water below it; south bank; then the canal road
-const FARM_TOP := -33
-const FARM_BOTTOM := -3
+const CANAL_TOP := -52  # north bank; water below it; south bank; then the canal road
+const FARM_TOP := -45
+const FARM_BOTTOM := -15
 const FARM_LEFT := -8
 const FIELD_W := 17  # 16 tiles of crops then a dirt farm road
-const FARM_ROAD_Y := -18
+const FARM_ROAD_Y := -30
 const PIPE_X := 44  # the water pipeline, canal to your north fence
-const FARMHOUSES := [Rect2i(-6, -31, 5, 4), Rect2i(64, -16, 5, 4), Rect2i(95, -31, 5, 4)]
+const FARMHOUSES := [Rect2i(-6, -43, 5, 4), Rect2i(64, -28, 5, 4), Rect2i(95, -43, 5, 4)]
 const CROPS := ["alfalfa", "cotton", "lettuce", "almonds", "fallow"]
 
 # West
@@ -26,22 +26,22 @@ const HWY_RIGHT := -14
 const ACCESS_Y := 30  # two-lane road from the highway to your west fence
 
 # South
-const MAIN_ST_Y := 55
-const SECOND_ST_Y := 63
+const MAIN_ST_Y := 67
+const SECOND_ST_Y := 75
 const CROSS_X := 29  # two lanes from your south fence through town
 const LOTS := [
-	{"kind": "gas", "r": Rect2i(-11, 50, 9, 5)},
-	{"kind": "house", "r": Rect2i(0, 50, 6, 5)}, {"kind": "house", "r": Rect2i(7, 50, 6, 5)},
-	{"kind": "house", "r": Rect2i(14, 50, 6, 5)}, {"kind": "house", "r": Rect2i(21, 50, 6, 5)},
-	{"kind": "lot", "r": Rect2i(33, 50, 6, 5)},
-	{"kind": "house", "r": Rect2i(40, 50, 6, 5)}, {"kind": "house", "r": Rect2i(47, 50, 6, 5)},
-	{"kind": "house", "r": Rect2i(0, 57, 6, 6)}, {"kind": "house", "r": Rect2i(7, 57, 6, 6)},
-	{"kind": "lot", "r": Rect2i(14, 57, 6, 6)}, {"kind": "house", "r": Rect2i(21, 57, 6, 6)},
-	{"kind": "house", "r": Rect2i(33, 57, 6, 6)}, {"kind": "house", "r": Rect2i(40, 57, 6, 6)},
-	{"kind": "lot", "r": Rect2i(47, 57, 6, 6)},
-	{"kind": "house", "r": Rect2i(0, 65, 6, 5)}, {"kind": "house", "r": Rect2i(7, 65, 6, 5)},
-	{"kind": "house", "r": Rect2i(14, 65, 6, 5)}, {"kind": "lot", "r": Rect2i(21, 65, 6, 5)},
-	{"kind": "house", "r": Rect2i(33, 65, 6, 5)},
+	{"kind": "gas", "r": Rect2i(-11, 62, 9, 5)},
+	{"kind": "house", "r": Rect2i(0, 62, 6, 5)}, {"kind": "house", "r": Rect2i(7, 62, 6, 5)},
+	{"kind": "house", "r": Rect2i(14, 62, 6, 5)}, {"kind": "house", "r": Rect2i(21, 62, 6, 5)},
+	{"kind": "lot", "r": Rect2i(33, 62, 6, 5)},
+	{"kind": "house", "r": Rect2i(40, 62, 6, 5)}, {"kind": "house", "r": Rect2i(47, 62, 6, 5)},
+	{"kind": "house", "r": Rect2i(0, 69, 6, 6)}, {"kind": "house", "r": Rect2i(7, 69, 6, 6)},
+	{"kind": "lot", "r": Rect2i(14, 69, 6, 6)}, {"kind": "house", "r": Rect2i(21, 69, 6, 6)},
+	{"kind": "house", "r": Rect2i(33, 69, 6, 6)}, {"kind": "house", "r": Rect2i(40, 69, 6, 6)},
+	{"kind": "lot", "r": Rect2i(47, 69, 6, 6)},
+	{"kind": "house", "r": Rect2i(0, 77, 6, 5)}, {"kind": "house", "r": Rect2i(7, 77, 6, 5)},
+	{"kind": "house", "r": Rect2i(14, 77, 6, 5)}, {"kind": "lot", "r": Rect2i(21, 77, 6, 5)},
+	{"kind": "house", "r": Rect2i(33, 77, 6, 5)},
 ]
 const HOUSE_COLORS := [Color(0.9, 0.85, 0.72), Color(0.78, 0.62, 0.48), Color(0.72, 0.8, 0.82),
 		Color(0.88, 0.74, 0.6), Color(0.8, 0.78, 0.66), Color(0.68, 0.72, 0.6)]
@@ -293,8 +293,13 @@ func _draw_ground(t: Vector2i) -> void:
 			draw_rect(r, Color(0.7, 0.58, 0.4))
 			if _hash(t) % 3 == 0:
 				draw_circle(r.position + Vector2(_hash(t) % 25 + 4, 16), 1.5, Color(0.58, 0.47, 0.32))
-		"field", "pipeline":
+		"field":
 			_draw_field(t, r)
+		"pipeline":  # runs over the fields, then open desert
+			if t.y >= FARM_TOP and t.y <= FARM_BOTTOM:
+				_draw_field(t, r)
+			else:
+				draw_rect(r, SAND)
 		"farmhouse":
 			draw_rect(r, Color(0.66, 0.6, 0.4))
 		"highway":

@@ -18,9 +18,9 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 
 ## The map
 - Your property is the fenced, gridded lot in the middle; you can only build there.
-- North: irrigated farms and farmhouses (not yours yet, buyable later), then the canal along the top edge. A water pipeline runs from the canal to your north fence (no water until you win water rights).
+- North: past some open desert, irrigated farms and farmhouses (not yours yet, buyable later), then the canal along the top edge. A water pipeline runs from the canal to your north fence (no water until you win water rights).
 - West: Highway CZ-99, with an access road to your west fence. East: open desert.
-- South: the town of Dustwater (15 houses, a gas station) with empty community lots for a future park or library.
+- South: past some open desert, the town of Dustwater (15 houses, a gas station) with empty community lots for a future park or library.
 - Hover anything off your property to see what it is.
 - **Outrage** (top bar, 0-100%): smog that drifts over your fence onto houses or farmhouses raises it, more smog faster; it slowly fades when the air clears. Hover a house to see its smog.
 
