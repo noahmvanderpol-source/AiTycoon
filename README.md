@@ -13,6 +13,7 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 - Left drag: floors fill a box, walls draw a box outline, furniture paints, doors place one at a time
 - Right click or `Esc` while dragging: cancel
 - `Space`: pause. Speed buttons top right (15 min per quarter at 1x)
+- `R`: switch between Ground and Roof view. Roofs hide while your mouse is inside a building; in Roof view you can build Solar Panels (cut rack power costs) and AC Units
 - WASD / arrows or middle-drag: pan. Mouse wheel: zoom
 - Furniture needs a floor. Staff can only walk on floors and through doors.
 
