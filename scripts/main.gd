@@ -17,25 +17,26 @@ const RECRUITER_FEE := 5000
 const SEVERANCE_DAYS := 5
 const RACK_POWER_PER_DAY := 400
 const SOLAR_SAVING := 60  # each rooftop solar panel knocks this off the rack power bill
-# Heat. Every indoor tile has a temperature in Fahrenheit (this is America, bro).
-# Racks heat their tile, heat spreads to neighbors, walls insulate, and buildings only
-# leak a little back toward room temperature, so a hot room keeps getting hotter.
+# Heat. Each room (building) has one temperature in Fahrenheit (this is America, bro).
+# Racks heat their room, bigger rooms take longer to heat, and a building only leaks a
+# little back toward room temperature, so an uncooled server room keeps getting hotter.
 const INDOOR_TEMP := 72.0
 const OUTDOOR_TEMP := 95.0  # Calizona, in the shade, of which there is none
 const MAX_TEMP := 150.0
 const HEAT_STEPS_PER_DAY := 8
-const RACK_HEAT := 5.0  # degrees added to a rack's tile each heat step
-const HEAT_SPREAD := 0.2  # share of the difference that flows to each neighbor per step
+const RACK_HEAT := 12.0  # heat a rack adds each step, spread over the room's floor tiles
 const HEAT_LEAK := 0.01  # how fast a building drifts back to room temperature on its own
 const RACK_SAFE_TEMP := 85.0  # racks throttle above this
 const RACK_THROTTLE := 0.015  # compute lost per degree over, down to RACK_MIN_OUTPUT
 const RACK_MIN_OUTPUT := 0.2
 const COMFORT_TEMP := 76.0  # staff slow down above this
 const HEAT_PRODUCTIVITY_LOSS := 0.02  # productivity lost per degree over, down to 20%
-# Cooling equipment. Each one pulls the tiles within `radius` toward `target` by `pull`
-# per heat step and costs `power` a day. New coolers (heat pumps, water cooling) go here.
+# Cooling equipment on the roof. Each removes `cooling` heat a step (same units as RACK_HEAT)
+# from the room below, never below `target`, and costs `power` a day.
+# The AC is the starter: it cancels out less than 2 racks and costs most of a rack's power bill.
+# New coolers (chillers, heat pumps, water cooling) go here.
 const COOLERS := {
-	"ac": {"radius": 2, "target": 64.0, "pull": 0.2, "power": 300},
+	"ac": {"name": "AC Unit", "cooling": 21.0, "target": 64.0, "power": 300},
 }
 const REVENUE_PER_USER := 0.05  # dollars per user per day
 const WIN_CAPABILITY := 100
@@ -152,7 +153,7 @@ var panning := false
 const LEVELS := ["Ground", "Roof"]
 var view_level := 0
 var roof_objects := {}  # Vector2i -> "solar" / "ac", things built on roofs
-var heat := {}  # indoor tile Vector2i -> temperature; anywhere else is OUTDOOR_TEMP
+var room_of := {}  # Vector2i -> index into buildings, for every tile under a roof
 var _heat_timer := 0.0
 var _heat_warned := false
 var buildings := []  # [{tiles: {Vector2i: true}, alpha}] each enclosed room gets a roof
@@ -509,34 +510,30 @@ func _build_heat_tab() -> void:
 
 
 func _update_heat_tab() -> void:
-	var hottest := 0.0
-	var worst_rack := 0.0
-	for t in objects:
-		if objects[t] == "rack":
-			worst_rack = maxf(worst_rack, _temp(t))
-	var total := 0.0
-	for t in heat:
-		total += heat[t]
-		hottest = maxf(hottest, heat[t])
-	var avg := INDOOR_TEMP if heat.is_empty() else total / heat.size()
+	var lines := []
+	for bld in buildings:
+		var racks := 0
+		var coolers := 0
+		for t in bld.tiles:
+			if objects.get(t) == "rack":
+				racks += 1
+			if COOLERS.has(roof_objects.get(t, "")):
+				coolers += 1
+		lines.append("%d°F   %d tiles, %d racks, %d coolers" % [bld.temp, bld.area, racks, coolers])
 	var prod := 0.0
 	for s in staff:
 		prod += s.productivity
 	prod = 1.0 if staff.is_empty() else prod / staff.size()
-	var coolers := 0
 	var cool_power := 0
 	for t in roof_objects:
 		if COOLERS.has(roof_objects[t]):
-			coolers += 1
 			cool_power += COOLERS[roof_objects[t]].power
-	var lost := _racks() - _rack_compute()
-	heat_label.text = ("Indoors: %d°F average, %d°F hottest\nHottest rack: %d°F\nRacks throttling: %.1f of %d racks' compute lost\n"
-		+ "Staff productivity: %d%%\nCooling: %d AC units, %s/day in power\n\n"
-		+ "Racks heat the room and the heat spreads. Racks slow down above %d°F, staff above %d°F. "
-		+ "Put AC Units on the roof (R in Build) over the hot spots; each one cools %d tiles around it.\n\n"
-		+ "The map is tinted by temperature while this panel is open.") % [
-		avg, hottest, worst_rack, lost, _racks(), int(prod * 100.0), coolers, _money(cool_power),
-		RACK_SAFE_TEMP, COMFORT_TEMP, (COOLERS.ac.radius * 2 + 1) * (COOLERS.ac.radius * 2 + 1)]
+	heat_label.text = ("Rooms:\n%s\n\nRack compute lost to heat: %.1f of %d\nStaff productivity: %d%%\nCooling power: %s/day\n\n"
+		+ "Racks heat their room. Racks throttle above %d°F, staff slow down above %d°F. "
+		+ "Put AC Units on the room's roof (R in Build). Each one cancels out a bit under 2 racks. Bigger rooms heat up slower.\n\n"
+		+ "Rooms are tinted by temperature while this panel is open.") % [
+		"\n".join(lines) if not lines.is_empty() else "none", _racks() - _rack_compute(), _racks(), int(prod * 100.0),
+		_money(cool_power), RACK_SAFE_TEMP, COMFORT_TEMP]
 
 
 # A centered pop-up that pauses the game until its button is pressed.
@@ -1264,7 +1261,7 @@ func _update_staff(delta: float) -> void:
 # --- Heat -------------------------------------------------------------------
 
 func _temp(t: Vector2i) -> float:
-	return heat.get(t, OUTDOOR_TEMP)
+	return buildings[room_of[t]].temp if room_of.has(t) else OUTDOOR_TEMP
 
 
 func _heat_view() -> bool:
@@ -1272,28 +1269,26 @@ func _heat_view() -> bool:
 
 
 func _tick_heat() -> void:
+	var added := []
+	added.resize(buildings.size())
+	added.fill(0.0)
 	for t in objects:
-		if objects[t] == "rack" and heat.has(t):
-			heat[t] += RACK_HEAT
+		if objects[t] == "rack" and room_of.has(t):
+			added[room_of[t]] += RACK_HEAT
 	for t in roof_objects:
-		if not COOLERS.has(roof_objects[t]):
-			continue
-		var c: Dictionary = COOLERS[roof_objects[t]]
-		for dx in range(-c.radius, c.radius + 1):
-			for dy in range(-c.radius, c.radius + 1):
-				var n: Vector2i = t + Vector2i(dx, dy)
-				if heat.has(n) and heat[n] > c.target:
-					heat[n] += (c.target - heat[n]) * c.pull
-	# Spread: each tile trades heat with its indoor neighbors. Walls don't conduct.
-	var next := {}
-	for t in heat:
-		var v: float = heat[t]
-		for d in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
-			if heat.has(t + d):
-				v += (heat[t + d] - heat[t]) * HEAT_SPREAD
+		if COOLERS.has(roof_objects[t]) and room_of.has(t):
+			added[room_of[t]] -= COOLERS[roof_objects[t]].cooling
+	for i in buildings.size():
+		var bld: Dictionary = buildings[i]
+		var v: float = bld.temp + added[i] / maxi(bld.area, 1)
+		var floor_temp := INDOOR_TEMP  # coolers can't push a room below their target
+		for t in roof_objects:
+			if COOLERS.has(roof_objects[t]) and room_of.get(t) == i:
+				floor_temp = minf(floor_temp, COOLERS[roof_objects[t]].target)
+		if added[i] < 0.0:
+			v = maxf(v, minf(bld.temp, floor_temp))
 		v += (INDOOR_TEMP - v) * HEAT_LEAK
-		next[t] = minf(v, MAX_TEMP)
-	heat = next
+		bld.temp = minf(v, MAX_TEMP)
 	for s in staff:
 		# Productivity starts at 100%. Heat takes a cut; break rooms and the like can add to it later.
 		var over := _temp(Vector2i((s.pos / TILE).floor())) - COMFORT_TEMP
@@ -1302,7 +1297,7 @@ func _tick_heat() -> void:
 		for t in objects:
 			if objects[t] == "rack" and _temp(t) > RACK_SAFE_TEMP + 10.0:
 				_heat_warned = true
-				_chet("Bro, the server room is %d degrees. The racks are thermal throttling. Put an AC Unit on the roof over them. Heat (H) shows the hot spots." % _temp(t))
+				_chet("Bro, the server room is %d degrees. The racks are thermal throttling. Put an AC Unit on the roof (R in Build). Heat (H) shows the hot rooms." % _temp(t))
 				break
 
 
@@ -1315,8 +1310,11 @@ func _heat_color(f: float) -> Color:
 
 
 func _draw_heat_tint() -> void:
-	for t in heat:
-		draw_rect(Rect2(Vector2(t) * TILE, Vector2(TILE, TILE)), _heat_color(heat[t]))
+	for bld in buildings:
+		var c := _heat_color(bld.temp)
+		for t in bld.tiles:
+			if wall_tiles.get(t) != "wall":
+				draw_rect(Rect2(Vector2(t) * TILE, Vector2(TILE, TILE)), c)
 
 
 func _draw_rack_temps() -> void:
@@ -1324,6 +1322,12 @@ func _draw_rack_temps() -> void:
 		if objects[t] == "rack" and _rack_output(t) < 1.0:
 			draw_string(ThemeDB.fallback_font, Vector2(t) * TILE + Vector2(2, -26), "%d%%" % int(_rack_output(t) * 100.0),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 0.35, 0.3))
+	for bld in buildings:  # each room's temperature on its first floor tile
+		for t in bld.tiles:
+			if wall_tiles.get(t) != "wall":
+				draw_string(ThemeDB.fallback_font, Vector2(t) * TILE + Vector2(4, 14), "%d°F" % bld.temp,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)
+				break
 
 
 # --- Roofs ------------------------------------------------------------------
@@ -1377,13 +1381,19 @@ func _find_buildings() -> void:
 			for o in old:  # keep the fade state of a building that already existed
 				if o.tiles.has(start):
 					alpha = o.alpha
-			buildings.append({"tiles": tiles, "alpha": alpha})
-	var indoor := {}
-	for bld in buildings:
-		for t in bld.tiles:
-			if wall_tiles.get(t) != "wall":
-				indoor[t] = heat.get(t, INDOOR_TEMP)  # new rooms start at room temperature
-	heat = indoor
+			var area := 0
+			for t in tiles:
+				if wall_tiles.get(t) != "wall":
+					area += 1
+			# A room keeps its temperature through rebuilds; brand new rooms start at room temperature.
+			var temp := INDOOR_TEMP
+			if room_of.has(start) and room_of[start] < old.size():
+				temp = old[room_of[start]].temp
+			buildings.append({"tiles": tiles, "alpha": alpha, "area": area, "temp": temp})
+	room_of = {}
+	for i in buildings.size():
+		for t in buildings[i].tiles:
+			room_of[t] = i
 	for t in roof_objects.keys():  # the roof came down, and so did whatever was on it
 		if not _roofed(t):
 			money += int(_tool_by_id(roof_objects[t]).cost / 2)
