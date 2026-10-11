@@ -1,0 +1,13 @@
+; Engine configuration file.
+config_version=5
+
+[application]
+config/name="AITycoon"
+run/main_scene="res://scenes/main.tscn"
+
+[display]
+window/size/viewport_width=1280
+window/size/viewport_height=720
+
+[rendering]
+environment/defaults/default_clear_color=Color(0.15, 0.12, 0.1, 1)
