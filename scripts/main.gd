@@ -592,8 +592,8 @@ func _build_guide_tab() -> void:
 
 
 # Research tree layout: the startup at the left, one row per branch, tiers left to right.
-const RT_NODE := Vector2(200, 56)
-const RT_COL := 235.0  # distance between tiers
+const RT_NODE := Vector2(215, 56)
+const RT_COL := 245.0  # distance between tiers
 const RT_ROW := 118.0  # distance between branches
 const RT_LEFT := 200.0  # where the first tier starts, after the root
 const RT_TOP := 26.0  # room for the branch name above each row
@@ -677,6 +677,12 @@ func _build_research_page() -> void:
 			b.pressed.connect(_pick_research.bind(r.id))
 			tree.add_child(b)
 			research_buttons[r.id] = b
+			var icon := Control.new()
+			icon.position = Vector2(10, (RT_NODE.y - 32) / 2.0)
+			icon.size = Vector2(32, 32)
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			icon.draw.connect(_draw_research_icon.bind(icon, r.id))
+			b.add_child(icon)
 
 
 # Top-left corner of a node: its branch picks the row, its place in the branch picks the tier.
@@ -688,6 +694,95 @@ func _rt_node_pos(r: Dictionary) -> Vector2:
 
 func _rt_root_y() -> float:
 	return RT_TOP + (RESEARCH_BRANCHES.size() - 1) * RT_ROW / 2.0 + RT_NODE.y / 2.0
+
+
+# Little code-drawn icons, 32x32, one per research node.
+func _draw_research_icon(c: Control, id: String) -> void:
+	var grey := Color(0.55, 0.55, 0.58)
+	var dark := Color(0.2, 0.2, 0.22)
+	var gold := Color(1.0, 0.8, 0.35)
+	match id:
+		"prefab":  # bricks
+			for row in 4:
+				for i in 3:
+					var x := i * 11 - (5 if row % 2 else 0)
+					c.draw_rect(Rect2(maxi(x, 0), 4 + row * 7, mini(10, 10 + x) if x < 0 else mini(10, 32 - x), 6), Color(0.75, 0.38, 0.28))
+		"roofs":  # roof with a solar panel
+			c.draw_colored_polygon(PackedVector2Array([Vector2(2, 18), Vector2(16, 4), Vector2(30, 18)]), Color(0.6, 0.35, 0.25))
+			c.draw_rect(Rect2(6, 18, 20, 12), Color(0.85, 0.8, 0.7))
+			c.draw_colored_polygon(PackedVector2Array([Vector2(13, 10), Vector2(19, 6), Vector2(24, 11), Vector2(18, 15)]), Color(0.2, 0.35, 0.7))
+		"insulation":  # pink fluffy layers
+			for i in 3:
+				var pts := PackedVector2Array()
+				for x in 9:
+					pts.append(Vector2(x * 4, 8 + i * 8 + (2 if x % 2 else -2)))
+				c.draw_polyline(pts, Color(0.95, 0.6, 0.7), 4.0)
+		"modular":  # stacked rack boxes
+			for i in 2:
+				c.draw_rect(Rect2(4 + i * 13, 4, 11, 26), dark)
+				for j in 4:
+					c.draw_rect(Rect2(6 + i * 13, 7 + j * 6, 7, 2), Color(0.3, 0.9, 0.5))
+		"diesel":  # generator with smoke
+			c.draw_rect(Rect2(3, 14, 26, 15), Color(0.85, 0.65, 0.2))
+			c.draw_rect(Rect2(6, 18, 10, 7), dark)
+			c.draw_rect(Rect2(22, 8, 4, 6), grey)
+			c.draw_circle(Vector2(26, 5), 3, Color(0.45, 0.45, 0.45))
+		"hvac":  # fan
+			c.draw_circle(Vector2(16, 16), 14, Color(0.35, 0.55, 0.75))
+			for a in 3:
+				var d := Vector2.from_angle(a * TAU / 3.0)
+				c.draw_circle(Vector2(16, 16) + d * 7, 5, Color(0.85, 0.92, 1.0))
+			c.draw_circle(Vector2(16, 16), 3, dark)
+		"lithium":  # battery
+			c.draw_rect(Rect2(3, 9, 24, 14), Color(0.9, 0.9, 0.9), false, 2.0)
+			c.draw_rect(Rect2(27, 13, 3, 6), Color(0.9, 0.9, 0.9))
+			c.draw_rect(Rect2(6, 12, 13, 8), Color(0.35, 0.85, 0.45))
+		"turbines":  # trailer with turbine
+			c.draw_rect(Rect2(2, 12, 28, 12), Color(0.7, 0.72, 0.75))
+			c.draw_circle(Vector2(9, 27), 3, dark)
+			c.draw_circle(Vector2(23, 27), 3, dark)
+			c.draw_circle(Vector2(16, 18), 5, dark)
+			c.draw_line(Vector2(11, 18), Vector2(21, 18), gold, 2.0)
+			c.draw_line(Vector2(16, 13), Vector2(16, 23), gold, 2.0)
+		"overclock", "silicon", "lowpower":  # a chip, with a flame, shine or bolt
+			var body := Color(0.25, 0.4, 0.3) if id != "silicon" else Color(0.35, 0.3, 0.5)
+			for i in 4:
+				c.draw_rect(Rect2(8 + i * 5, 2, 2, 28), grey)
+				c.draw_rect(Rect2(2, 8 + i * 5, 28, 2), grey)
+			c.draw_rect(Rect2(6, 6, 20, 20), body)
+			if id == "overclock":
+				c.draw_colored_polygon(PackedVector2Array([Vector2(16, 9), Vector2(22, 20), Vector2(16, 24), Vector2(10, 20)]), Color(1.0, 0.5, 0.15))
+				c.draw_circle(Vector2(16, 20), 3, gold)
+			elif id == "silicon":
+				c.draw_rect(Rect2(11, 11, 10, 10), Color(0.75, 0.75, 0.85))
+			else:
+				c.draw_colored_polygon(PackedVector2Array([Vector2(18, 8), Vector2(11, 17), Vector2(16, 17), Vector2(14, 24), Vector2(21, 15), Vector2(16, 15)]), gold)
+		"wafer":  # big round wafer with a grid
+			c.draw_circle(Vector2(16, 16), 14, Color(0.6, 0.6, 0.75))
+			for i in range(1, 4):
+				c.draw_line(Vector2(i * 8, 4), Vector2(i * 8, 28), Color(0.4, 0.4, 0.55), 1.0)
+				c.draw_line(Vector2(4, i * 8), Vector2(28, i * 8), Color(0.4, 0.4, 0.55), 1.0)
+		"snacks":  # donut
+			c.draw_circle(Vector2(16, 16), 13, Color(0.8, 0.55, 0.3))
+			c.draw_circle(Vector2(16, 16), 11, Color(0.95, 0.5, 0.7))
+			c.draw_circle(Vector2(16, 16), 4, Color(0.1, 0.1, 0.12))
+		"standups":  # clock
+			c.draw_circle(Vector2(16, 16), 13, Color(0.9, 0.9, 0.85))
+			c.draw_line(Vector2(16, 16), Vector2(16, 7), dark, 2.0)
+			c.draw_line(Vector2(16, 16), Vector2(23, 16), dark, 2.0)
+		"hustle":  # coffee cup with steam
+			c.draw_rect(Rect2(6, 12, 15, 17), Color(0.95, 0.95, 0.95))
+			c.draw_arc(Vector2(22, 20), 4, -PI / 2, PI / 2, 8, Color(0.95, 0.95, 0.95), 2.0)
+			c.draw_rect(Rect2(8, 14, 11, 4), Color(0.45, 0.28, 0.15))
+			c.draw_line(Vector2(10, 9), Vector2(12, 3), grey, 2.0)
+			c.draw_line(Vector2(16, 9), Vector2(18, 3), grey, 2.0)
+		"pto":  # palm tree
+			c.draw_line(Vector2(17, 30), Vector2(15, 10), Color(0.55, 0.4, 0.25), 3.0)
+			for d in [Vector2(-10, 4), Vector2(10, 4), Vector2(-7, -5), Vector2(7, -5)]:
+				c.draw_line(Vector2(15, 10), Vector2(15, 10) + d, Color(0.3, 0.75, 0.35), 3.0)
+			c.draw_circle(Vector2(26, 6), 4, gold)
+		_:
+			c.draw_circle(Vector2(16, 16), 10, grey)
 
 
 # Lines into each node: green once it's done, gold if it can be researched now, grey if not yet.
@@ -726,6 +821,7 @@ func _update_research_tab() -> void:
 		var st := StyleBoxFlat.new()
 		st.set_corner_radius_all(6)
 		st.set_border_width_all(2)
+		st.content_margin_left = 46  # room for the icon
 		st.bg_color = Color(0.16, 0.3, 0.18) if done else (Color(0.22, 0.2, 0.15) if open else Color(0.13, 0.13, 0.15))
 		st.border_color = Color(1.0, 0.8, 0.35) if r.id == research_active else (Color(0.4, 0.8, 0.45) if done else Color(0.3, 0.3, 0.33))
 		for state in ["normal", "hover", "pressed", "disabled"]:
