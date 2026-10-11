@@ -1,6 +1,7 @@
 extends Node2D
 ## Starter map: a small pre-built office in the Calizona desert, plus a handful of
 ## construction tools (Prison Architect style: you build, staff wander around).
+## Server racks give compute, compute trains models, and models win users, who pay.
 
 const TILE := 32
 const SUB := TILE / 2  # each tile splits into a 2x2 subgrid for small, precisely placed items
@@ -12,6 +13,29 @@ const SECONDS_PER_DAY := 900.0 / 91.0  # 15 real minutes per quarter at 1x
 const START_YEAR := 2027
 const SALARY_PER_DAY := 1200
 const RACK_POWER_PER_DAY := 400
+const REVENUE_PER_USER := 0.05  # dollars per user per day
+const WIN_CAPABILITY := 100
+
+# Training sizes. Cost and work grow with your best model, so each step up costs more.
+const MODEL_SIZES := [
+	{"name": "Small", "suffix": "Mini", "cost": 100_000, "work": 40.0, "gain": 8},
+	{"name": "Medium", "suffix": "Pro", "cost": 400_000, "work": 150.0, "gain": 16},
+	{"name": "Large", "suffix": "Ultra", "cost": 1_500_000, "work": 500.0, "gain": 32},
+]
+
+# Rival labs follow a script: [day, lab, model, capability].
+const RIVAL_RELEASES := [
+	[1, "ClosedAI", "ChatGTP-3", 10],
+	[60, "Gogle", "Bard Simpson", 13],
+	[150, "ClosedAI", "ChatGTP-4", 20],
+	[230, "Metta", "Llamarama 2", 26],
+	[320, "Gogle", "Gemineye Ultra", 34],
+	[420, "ClosedAI", "ChatGTP-5", 45],
+	[520, "Metta", "Llamarama 3", 55],
+	[620, "Gogle", "Gemineye Infinity", 67],
+	[730, "ClosedAI", "ChatGTP-6o-mini-max", 80],
+	[850, "Metta", "Llamarama 4 (open-ish)", 92],
+]
 
 # Every buildable thing. layer: which map layer it lives on. drag: how the mouse places it.
 # Things on the "sub" layer take one subgrid cell (a quarter tile) and don't block walking.
@@ -34,6 +58,8 @@ const CHET_TIPS := [
 	"Server Racks are where the AI lives. Feed them money and they feed you... eventually.",
 	"Ficus plants boost morale by 0%. Investors love them though.",
 	"Revenue? We're pre-revenue. That's a vibe, not a problem.",
+	"More Server Racks means more compute means faster training. It's literally just math, bro.",
+	"Users are revenue. Revenue is users. I learned that at Stanford. Well, near Stanford.",
 	"Right-click demolishes stuff. Like the old office culture. Disrupted.",
 	"Every door is an open door policy if you think about it.",
 ]
@@ -44,6 +70,13 @@ var objects := {}  # Vector2i -> "desk" / "rack" / "ficus"
 var sub_objects := {}  # subgrid cell Vector2i -> "coffee"
 
 var money := 2_000_000
+var company := "Untitled AI"
+var models := []  # released, best last: [{name, cap, day}]
+var training := {}  # in progress: {name, cap, work, done}
+var users := 0.0
+var revenue_today := 0
+var rival: Array = RIVAL_RELEASES[0]
+var _next_rival := 1
 var day := 1
 var speed := 1
 var tool_index := 0
@@ -68,6 +101,15 @@ var chet_label: Label
 var cost_label: Label
 var tool_buttons := []
 var speed_buttons := []
+var ui_layer: CanvasLayer
+var tabs: TabContainer
+var models_label: Label
+var train_label: Label
+var train_bar: ProgressBar
+var train_buttons := []
+var modal: Control  # the open pop-up, if any; the game pauses under it
+var modal_button: Button
+var _speed_before_modal := 1
 
 
 func _ready() -> void:
@@ -83,11 +125,12 @@ func _ready() -> void:
 		staff.append({"pos": _tile_center(Vector2i(27, 22)), "path": PackedVector2Array(), "wait": rng.randf_range(0.5, 2.0), "shirt": shirt})
 
 	camera = Camera2D.new()
-	camera.position = _tile_center(Vector2i(30, 22))
+	camera.position = _tile_center(Vector2i(33, 22))
 	camera.zoom = Vector2(1.4, 1.4)
 	add_child(camera)
 	_build_ui()
 	_select_tool(0)
+	_ask_company_name()
 
 
 func _build_starter_office() -> void:
@@ -122,6 +165,7 @@ func _panel_style(alpha := 0.85) -> StyleBoxFlat:
 func _build_ui() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
+	ui_layer = layer
 
 	var top := PanelContainer.new()
 	top.add_theme_stylebox_override("panel", _panel_style())
@@ -167,12 +211,137 @@ func _build_ui() -> void:
 		row.add_child(b)
 		tool_buttons.append(b)
 
+	var side := PanelContainer.new()
+	side.add_theme_stylebox_override("panel", _panel_style())
+	side.anchor_left = 1.0
+	side.anchor_right = 1.0
+	side.offset_left = -330
+	side.offset_right = -8
+	side.offset_top = 56
+	layer.add_child(side)
+	tabs = TabContainer.new()
+	tabs.focus_mode = Control.FOCUS_NONE
+	side.add_child(tabs)
+	_build_models_tab()
+
 	cost_label = Label.new()
 	cost_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	cost_label.add_theme_constant_override("outline_size", 4)
 	cost_label.visible = false
 	layer.add_child(cost_label)
 	_chet(CHET_TIPS[0])
+
+
+func _tab_box(title: String) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.name = title
+	box.custom_minimum_size.x = 300
+	box.add_theme_constant_override("separation", 6)
+	tabs.add_child(box)
+	return box
+
+
+func _wrap_label(parent: Control) -> Label:
+	var l := Label.new()
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.add_theme_font_size_override("font_size", 14)
+	parent.add_child(l)
+	return l
+
+
+func _build_models_tab() -> void:
+	var box := _tab_box("Models")
+	models_label = _wrap_label(box)
+	box.add_child(HSeparator.new())
+	train_label = _wrap_label(box)
+	train_bar = ProgressBar.new()
+	train_bar.custom_minimum_size.y = 16
+	train_bar.show_percentage = false
+	box.add_child(train_bar)
+	for i in MODEL_SIZES.size():
+		var b := Button.new()
+		b.focus_mode = Control.FOCUS_NONE
+		b.add_theme_font_size_override("font_size", 14)
+		b.pressed.connect(_start_training.bind(i))
+		box.add_child(b)
+		train_buttons.append(b)
+
+
+func _update_models_tab() -> void:
+	var best := "none yet" if models.is_empty() else "%s (capability %d)" % [models.back().name, models.back().cap]
+	models_label.text = "Best model: %s\nUsers: %s\nRevenue: %s/day\nCompute: %d racks, %.1f per day\nTop rival: %s %s (capability %d)" % [
+		best, _num(int(users)), _money(revenue_today), _racks(), _compute_per_day(), rival[1], rival[2], rival[3]]
+	var compute := _compute_per_day()
+	if training.is_empty():
+		train_label.text = "Nothing training. Pick a size:" if _racks() > 0 else "Build a Server Rack to train models."
+		train_bar.visible = false
+	else:
+		var days_left := "?" if compute <= 0.0 else str(ceili((training.work - training.done) / compute))
+		train_label.text = "Training %s (capability %d), %s days left" % [training.name, training.cap, days_left]
+		train_bar.visible = true
+		train_bar.value = 100.0 * training.done / training.work
+	for i in MODEL_SIZES.size():
+		var size: Dictionary = MODEL_SIZES[i]
+		var days := "?" if compute <= 0.0 else str(ceili(_train_work(i) / compute))
+		train_buttons[i].text = "Train %s   %s   ~%s days   +%d" % [size.name, _money(_train_cost(i)), days, size.gain]
+		train_buttons[i].disabled = not training.is_empty() or _train_cost(i) > money or _racks() == 0
+
+
+# A centered pop-up that pauses the game until its button is pressed.
+func _show_modal(title: String, body: String, button_text: String, on_close: Callable, extra: Control = null) -> void:
+	_speed_before_modal = speed
+	_set_speed(0)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.55)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ui_layer.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.add_child(center)
+	var panel := PanelContainer.new()
+	var style := _panel_style(0.97)
+	style.set_content_margin_all(18)
+	panel.add_theme_stylebox_override("panel", style)
+	center.add_child(panel)
+	var col := VBoxContainer.new()
+	col.custom_minimum_size.x = 480
+	col.add_theme_constant_override("separation", 12)
+	panel.add_child(col)
+	var t := Label.new()
+	t.text = title
+	t.add_theme_font_size_override("font_size", 24)
+	col.add_child(t)
+	var b := Label.new()
+	b.text = body
+	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(b)
+	if extra:
+		col.add_child(extra)
+	var btn := Button.new()
+	btn.text = button_text
+	btn.pressed.connect(func():
+		dim.queue_free()
+		modal = null
+		_set_speed(_speed_before_modal)
+		on_close.call())
+	col.add_child(btn)
+	modal = dim
+	modal_button = btn
+
+
+func _ask_company_name() -> void:
+	var edit := LineEdit.new()
+	edit.placeholder_text = "Untitled AI"
+	edit.max_length = 24
+	edit.text_submitted.connect(func(_t): modal_button.pressed.emit())
+	_show_modal("Welcome to Calizona",
+		"Chet: Bro! You quit your job, I got us a seed round, and we're gonna build the smartest AI on Earth. Every unicorn needs a name. Make it sound like it's worth a billion dollars.",
+		"Found the company", func():
+			var n := edit.text.strip_edges()
+			company = n if n != "" else "Untitled AI"
+			_chet("%s. Love it. Huge. Now open the Models tab and train our first model on those racks." % company),
+		edit)
+	edit.call_deferred("grab_focus")
 
 
 func _select_tool(i: int) -> void:
@@ -196,17 +365,23 @@ func _chet(text: String) -> void:
 func _update_hud() -> void:
 	var q := (day - 1) / 91
 	var burn := _daily_burn()
-	top_label.text = "Untitled AI Startup, Calizona     %s     Burn %s/day     Revenue $0 (pre-revenue)     Q%d %d, Day %d" % [
-		_money(money), _money(burn), q % 4 + 1, START_YEAR + q / 4, (day - 1) % 91 + 1]
+	var revenue := "Revenue %s/day" % _money(revenue_today) if models.size() > 0 else "Revenue $0 (pre-revenue)"
+	top_label.text = "%s, Calizona     %s     Burn %s/day     %s     Users %s     Q%d %d, Day %d" % [
+		company, _money(money), _money(burn), revenue, _num(int(users)), q % 4 + 1, START_YEAR + q / 4, (day - 1) % 91 + 1]
+	_update_models_tab()
 
 
-func _money(v: int) -> String:
+func _num(v: int) -> String:
 	var s := str(absi(v))
 	var out := ""
 	while s.length() > 3:
 		out = "," + s.right(3) + out
 		s = s.left(s.length() - 3)
-	return ("-$" if v < 0 else "$") + s + out
+	return ("-" if v < 0 else "") + s + out
+
+
+func _money(v: int) -> String:
+	return ("-$" if v < 0 else "$") + _num(absi(v))
 
 
 # --- Loop and input ---------------------------------------------------------
@@ -214,7 +389,9 @@ func _money(v: int) -> String:
 func _process(delta: float) -> void:
 	_time += delta
 	var dir := Vector2.ZERO
-	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): dir.x -= 1
+	if modal:
+		pass
+	elif Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): dir.x -= 1
 	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): dir.x += 1
 	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): dir.y -= 1
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): dir.y += 1
@@ -223,8 +400,7 @@ func _process(delta: float) -> void:
 	_day_timer += delta * speed
 	while _day_timer >= SECONDS_PER_DAY:
 		_day_timer -= SECONDS_PER_DAY
-		day += 1
-		money -= _daily_burn()
+		_new_day()
 	_tip_timer += delta
 	if _tip_timer > 15.0:
 		_tip = (_tip + 1) % CHET_TIPS.size()
@@ -253,6 +429,8 @@ func _input(event: InputEvent) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if modal:
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode >= KEY_1 and event.keycode < KEY_1 + TOOLS.size() - 1:
 			_select_tool(event.keycode - KEY_1)
@@ -418,11 +596,91 @@ func _demolish(t: Vector2i) -> void:
 
 
 func _daily_burn() -> int:
-	var racks := 0
+	return staff.size() * SALARY_PER_DAY + _racks() * RACK_POWER_PER_DAY
+
+
+# --- Models, users and rivals ------------------------------------------------
+
+func _new_day() -> void:
+	day += 1
+	money -= _daily_burn()
+	_tick_training()
+	_tick_users()
+	_tick_rivals()
+
+
+func _racks() -> int:
+	var n := 0
 	for t in objects:
 		if objects[t] == "rack":
-			racks += 1
-	return staff.size() * SALARY_PER_DAY + racks * RACK_POWER_PER_DAY
+			n += 1
+	return n
+
+
+func _compute_per_day() -> float:
+	return float(_racks())
+
+
+func _best_cap() -> int:
+	return 0 if models.is_empty() else models.back().cap
+
+
+func _train_cost(i: int) -> int:
+	return int(MODEL_SIZES[i].cost * (1.0 + _best_cap() / 20.0))
+
+
+func _train_work(i: int) -> float:
+	return MODEL_SIZES[i].work * (1.0 + _best_cap() / 20.0)
+
+
+func _start_training(i: int) -> void:
+	var cost := _train_cost(i)
+	if not training.is_empty() or _racks() == 0 or cost > money:
+		return
+	money -= cost
+	var size: Dictionary = MODEL_SIZES[i]
+	training = {
+		"name": "%s-%d %s" % [company.split(" ")[0], models.size() + 1, size.suffix],
+		"cap": _best_cap() + size.gain, "work": _train_work(i), "done": 0.0,
+	}
+	_chet(["Small model, smart move. Ship fast, apologize later.",
+		"A Pro model. Investors love the word Pro. They don't know what it means either.",
+		"ULTRA. Bro. This is the one. Probably. Unless it isn't."][i])
+
+
+func _tick_training() -> void:
+	if training.is_empty():
+		return
+	training.done += _compute_per_day()
+	if training.done < training.work:
+		return
+	models.append({"name": training.name, "cap": training.cap, "day": day})
+	var beat := "We beat %s's %s! Screenshot the benchmark, ignore the others." % [rival[1], rival[2]] \
+		if training.cap > rival[3] else "It's behind %s's %s, but the vibes are immaculate." % [rival[1], rival[2]]
+	_chet("%s just shipped with capability %d. %s" % [training.name, training.cap, beat])
+	training = {}
+
+
+func _user_target() -> float:
+	var cap := _best_cap()
+	if cap == 0:
+		return 0.0
+	# More capable models attract more users, and losing to the best rival costs share.
+	return 2500.0 * pow(cap, 1.5) * clampf(float(cap) / rival[3], 0.3, 1.5)
+
+
+func _tick_users() -> void:
+	var target := _user_target()
+	users += (target - users) * (0.03 if target > users else 0.02)
+	revenue_today = int(users * REVENUE_PER_USER)
+	money += revenue_today
+
+
+func _tick_rivals() -> void:
+	while _next_rival < RIVAL_RELEASES.size() and day >= RIVAL_RELEASES[_next_rival][0]:
+		rival = RIVAL_RELEASES[_next_rival]
+		_next_rival += 1
+		_chet("%s just dropped %s, capability %d. Users are gonna be thirsty for that. Ship something, bro." % [rival[1], rival[2], rival[3]])
 
 
 # --- Staff ------------------------------------------------------------------
