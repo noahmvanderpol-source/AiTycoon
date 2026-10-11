@@ -30,3 +30,10 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
   - **Growth** at a desk: +20% users each.
   - **Slack off**: wanders around.
 - Anyone can do any job, but off-role they work at half speed. No free desk or rack means no work, so build more.
+
+## Board
+- Every quarter the board sets one target, cycling through: release a model at least as good as the top rival, grow users, and earn revenue. The first quarter only asks you to ship any model.
+- At the quarter's end there's a board meeting. Hit the target: +15 Board Confidence. Miss: -25 (-10 in the first quarter).
+- **Fired** if Board Confidence hits 0% or your money goes below $0.
+- **You win?** when a model reaches capability 100 and replaces you as CEO.
+- The **Board** tab shows confidence, the current target, progress and days left.

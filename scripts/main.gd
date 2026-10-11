@@ -2,6 +2,7 @@ extends Node2D
 ## Starter map: a small pre-built office in the Calizona desert, plus a handful of
 ## construction tools (Prison Architect style: you build and assign jobs, staff do the rest).
 ## Server racks give compute, compute trains models, and models win users, who pay.
+## The board sets a target every quarter; miss too many and you're fired.
 
 const TILE := 32
 const SUB := TILE / 2  # each tile splits into a 2x2 subgrid for small, precisely placed items
@@ -18,11 +19,11 @@ const RACK_POWER_PER_DAY := 400
 const REVENUE_PER_USER := 0.05  # dollars per user per day
 const WIN_CAPABILITY := 100
 
-# Training sizes. Cost and work grow with your best model, so each step up costs more.
+# Training sizes. Cost and work grow with your best model (see _train_cost and _train_work).
 const MODEL_SIZES := [
-	{"name": "Small", "suffix": "Mini", "cost": 100_000, "work": 40.0, "gain": 8},
-	{"name": "Medium", "suffix": "Pro", "cost": 400_000, "work": 150.0, "gain": 16},
-	{"name": "Large", "suffix": "Ultra", "cost": 1_500_000, "work": 500.0, "gain": 32},
+	{"name": "Small", "suffix": "Mini", "cost": 100_000, "work": 120.0, "gain": 8},
+	{"name": "Medium", "suffix": "Pro", "cost": 400_000, "work": 450.0, "gain": 16},
+	{"name": "Large", "suffix": "Ultra", "cost": 1_500_000, "work": 1500.0, "gain": 32},
 ]
 
 # Who you can hire. A role decides salary and shirt; it does its matching job at full speed.
@@ -42,6 +43,13 @@ const JOB_ORDER := ["research", "engineering", "growth", "none"]
 const FIRST_NAMES := ["Brayden", "Priya", "Skyler", "Dmitri", "Kai", "Megan", "Tobias", "Aiko", "Jaxon",
 	"Fatima", "Chad", "Lena", "Rohan", "Sienna", "Mateo", "Zoe", "Gunnar", "Imani", "Theo", "Wren"]
 const NO_SEAT := Vector2i(-1, -1)
+const DAYS_PER_QUARTER := 91
+
+const BOARD := [
+	{"name": "Chad Moneybags", "seat": "Venture Capital"},
+	{"name": "Bitsy Pivot", "seat": "Influencer, 4M followers"},
+	{"name": "Dr. Ethel Prudence", "seat": "Ethics (non-voting)"},
+]
 
 # Rival labs follow a script: [day, lab, model, capability].
 const RIVAL_RELEASES := [
@@ -65,7 +73,7 @@ const TOOLS := [
 	{"id": "wall", "name": "Wall", "layer": "wall", "cost": 800, "drag": "outline"},
 	{"id": "door", "name": "Door", "layer": "wall", "cost": 2500, "drag": "single"},
 	{"id": "desk", "name": "Desk", "layer": "object", "cost": 6000, "drag": "paint"},
-	{"id": "rack", "name": "Server Rack", "layer": "object", "cost": 40000, "drag": "paint"},
+	{"id": "rack", "name": "Server Rack", "layer": "object", "cost": 100000, "drag": "paint"},
 	{"id": "ficus", "name": "Ficus", "layer": "object", "cost": 300, "drag": "paint"},
 	{"id": "coffee", "name": "Coffee Maker", "layer": "sub", "cost": 1500, "drag": "paint"},
 	{"id": "demolish", "name": "Demolish", "layer": "", "cost": 0, "drag": "fill"},
@@ -81,6 +89,7 @@ const CHET_TIPS := [
 	"More Server Racks means more compute means faster training. It's literally just math, bro.",
 	"Researchers at desks train models faster. Engineers babysit racks for extra compute. Marketers at desks get users.",
 	"Assign jobs in the Staff tab. You don't tell people what to do, you tell them what their job is. Leadership.",
+	"The board sets one target a quarter. Hit it and they love you. Miss it and, well, I hear Uber's hiring.",
 	"Users are revenue. Revenue is users. I learned that at Stanford. Well, near Stanford.",
 	"Right-click demolishes stuff. Like the old office culture. Disrupted.",
 	"Every door is an open door policy if you think about it.",
@@ -99,6 +108,11 @@ var users := 0.0
 var revenue_today := 0
 var rival: Array = RIVAL_RELEASES[0]
 var _next_rival := 1
+var confidence := 60  # Board Confidence; at 0 you're fired
+var target := {}  # this quarter's board target: {kind, goal, text, quote, q}
+var quarter_revenue := 0
+var quarter_best_release := 0
+var game_over := false
 var day := 1
 var speed := 1
 var tool_index := 0
@@ -131,6 +145,10 @@ var train_bar: ProgressBar
 var train_buttons := []
 var staff_label: Label
 var staff_list: VBoxContainer
+var board_label: Label
+var board_bar: ProgressBar
+var board_target_label: Label
+var board_members_label: Label
 var modal: Control  # the open pop-up, if any; the game pauses under it
 var modal_button: Button
 var _speed_before_modal := 1
@@ -154,6 +172,7 @@ func _ready() -> void:
 	add_child(camera)
 	_build_ui()
 	_select_tool(0)
+	_new_target(0)
 	_ask_company_name()
 
 
@@ -248,6 +267,7 @@ func _build_ui() -> void:
 	side.add_child(tabs)
 	_build_models_tab()
 	_build_staff_tab()
+	_build_board_tab()
 
 	cost_label = Label.new()
 	cost_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -382,6 +402,37 @@ func _update_staff_tab() -> void:
 		staff.size(), _money(payroll), _workforce("research"), _workforce("engineering"), _workforce("growth")]
 
 
+func _build_board_tab() -> void:
+	var box := _tab_box("Board")
+	board_label = _wrap_label(box)
+	board_bar = ProgressBar.new()
+	board_bar.custom_minimum_size.y = 16
+	board_bar.show_percentage = false
+	box.add_child(board_bar)
+	box.add_child(HSeparator.new())
+	board_target_label = _wrap_label(box)
+	box.add_child(HSeparator.new())
+	board_members_label = _wrap_label(box)
+
+
+func _update_board_tab() -> void:
+	board_label.text = "Board Confidence: %d%%" % confidence
+	board_bar.value = confidence
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color(0.35, 0.75, 0.4) if confidence >= 50 else (Color(0.9, 0.7, 0.2) if confidence >= 25 else Color(0.9, 0.3, 0.25))
+	board_bar.add_theme_stylebox_override("fill", fill)
+	var left := DAYS_PER_QUARTER - (day - 1) % DAYS_PER_QUARTER
+	board_target_label.text = "This quarter: %s\nProgress: %s\n%d days left\n\n\"%s\"" % [
+		target.text, _target_progress_text(), left, target.quote]
+	var mood := "Thrilled. Already planning the IPO party." if confidence >= 70 \
+		else ("Concerned. Using the word 'runway' a lot." if confidence >= 35 else "Quietly interviewing your replacement.")
+	var lines := []
+	for m in BOARD:
+		lines.append("%s, %s" % [m.name, m.seat])
+	board_members_label.text = "Mood: %s\n\n%s\n\nHit a target: +15. Miss: -25. At 0%% you're fired. Run out of money and you're fired faster." % [
+		mood, "\n".join(lines)]
+
+
 # A centered pop-up that pauses the game until its button is pressed.
 func _show_modal(title: String, body: String, button_text: String, on_close: Callable, extra: Control = null) -> void:
 	_speed_before_modal = speed
@@ -458,13 +509,14 @@ func _chet(text: String) -> void:
 
 
 func _update_hud() -> void:
-	var q := (day - 1) / 91
+	var q := (day - 1) / DAYS_PER_QUARTER
 	var burn := _daily_burn()
 	var revenue := "Revenue %s/day" % _money(revenue_today) if models.size() > 0 else "Revenue $0 (pre-revenue)"
-	top_label.text = "%s, Calizona     %s     Burn %s/day     %s     Users %s     Q%d %d, Day %d" % [
-		company, _money(money), _money(burn), revenue, _num(int(users)), q % 4 + 1, START_YEAR + q / 4, (day - 1) % 91 + 1]
+	top_label.text = "%s, Calizona     %s     Burn %s/day     %s     Users %s     Board %d%%     %s, Day %d" % [
+		company, _money(money), _money(burn), revenue, _num(int(users)), confidence, _quarter_name(q), (day - 1) % DAYS_PER_QUARTER + 1]
 	_update_models_tab()
 	_update_staff_tab()
+	_update_board_tab()
 
 
 func _num(v: int) -> String:
@@ -494,7 +546,7 @@ func _process(delta: float) -> void:
 	camera.position += dir * PAN_SPEED * delta / camera.zoom.x
 
 	_day_timer += delta * speed
-	while _day_timer >= SECONDS_PER_DAY:
+	while _day_timer >= SECONDS_PER_DAY and not modal and not game_over:
 		_day_timer -= SECONDS_PER_DAY
 		_new_day()
 	_tip_timer += delta
@@ -706,7 +758,13 @@ func _new_day() -> void:
 	_tick_training()
 	_tick_users()
 	_tick_rivals()
-
+	if game_over:
+		return
+	if money < 0:
+		_end_game("Fired",
+			"You ran out of money. The board fired you by group text, then asked if you could still Venmo them for lunch.")
+	elif (day - 1) % DAYS_PER_QUARTER == 0:
+		_end_quarter()
 
 func _racks() -> int:
 	var n := 0
@@ -730,12 +788,13 @@ func _best_cap() -> int:
 	return 0 if models.is_empty() else models.back().cap
 
 
+# Each step up the capability ladder costs more money and a lot more compute.
 func _train_cost(i: int) -> int:
-	return int(MODEL_SIZES[i].cost * (1.0 + _best_cap() / 20.0))
+	return int(MODEL_SIZES[i].cost * pow(1.035, _best_cap()))
 
 
 func _train_work(i: int) -> float:
-	return MODEL_SIZES[i].work * (1.0 + _best_cap() / 20.0)
+	return MODEL_SIZES[i].work * pow(1.05, _best_cap())
 
 
 func _start_training(i: int) -> void:
@@ -760,6 +819,12 @@ func _tick_training() -> void:
 	if training.done < training.work:
 		return
 	models.append({"name": training.name, "cap": training.cap, "day": day})
+	quarter_best_release = maxi(quarter_best_release, training.cap)
+	if training.cap >= WIN_CAPABILITY:
+		_end_game("You win?",
+			"%s reached capability %d. It reviewed the company, wrote a better strategy than yours in 4 seconds, and the board made it CEO.\n\nYou have built an AI fully capable of running the company itself. You win?" % [training.name, training.cap])
+		training = {}
+		return
 	var beat := "We beat %s's %s! Screenshot the benchmark, ignore the others." % [rival[1], rival[2]] \
 		if training.cap > rival[3] else "It's behind %s's %s, but the vibes are immaculate." % [rival[1], rival[2]]
 	_chet("%s just shipped with capability %d. %s" % [training.name, training.cap, beat])
@@ -780,6 +845,7 @@ func _tick_users() -> void:
 	users += (target - users) * (0.03 if target > users else 0.02)
 	revenue_today = int(users * REVENUE_PER_USER)
 	money += revenue_today
+	quarter_revenue += revenue_today
 
 
 func _tick_rivals() -> void:
@@ -787,6 +853,81 @@ func _tick_rivals() -> void:
 		rival = RIVAL_RELEASES[_next_rival]
 		_next_rival += 1
 		_chet("%s just dropped %s, capability %d. Users are gonna be thirsty for that. Ship something, bro." % [rival[1], rival[2], rival[3]])
+
+
+# --- Board ------------------------------------------------------------------
+
+func _quarter_name(q: int) -> String:
+	return "Q%d %d" % [q % 4 + 1, START_YEAR + q / 4]
+
+
+func _round_up_nice(v: float) -> int:
+	# 37,512 -> 38,000: round up to two significant digits.
+	var step := pow(10.0, maxf(floorf(log(maxf(v, 1.0)) / log(10.0)) - 1.0, 0.0))
+	return int(ceilf(v / step) * step)
+
+
+# The board cycles through three kinds of demand, each a bit tougher than the last.
+func _new_target(q: int) -> void:
+	var kind: String = ["release", "users", "revenue"][q % 3]
+	var goal := 0
+	var text := ""
+	var quote := ""
+	match kind:
+		"release":
+			goal = 1 if q == 0 else maxi(_best_cap() + 1, rival[3])
+			text = "Ship our first model. Any model." if q == 0 else "Release a model with capability %d or more" % goal
+			quote = "Our competitors ship. We ship. I don't care what. - Chad Moneybags. (Dr. Prudence asked for a safety review. Noted.)"
+		"users":
+			goal = _round_up_nice(maxf(25_000.0, users * 1.5))
+			text = "Reach %s users" % _num(goal)
+			quote = "Users are the new users. I want %s of them. Go viral, babe. - Bitsy Pivot" % _num(goal)
+		"revenue":
+			goal = _round_up_nice(maxf(100_000.0, revenue_today * DAYS_PER_QUARTER * 1.3))
+			text = "Earn %s in revenue this quarter" % _money(goal)
+			quote = "Revenue. That's it. That's the memo. - Chad Moneybags"
+	target = {"kind": kind, "goal": goal, "text": text, "quote": quote, "q": q}
+
+
+func _target_progress() -> int:
+	match target.kind:
+		"release": return quarter_best_release
+		"users": return int(users)
+		_: return quarter_revenue
+
+
+func _target_progress_text() -> String:
+	var p := _target_progress()
+	var done := "  (done!)" if p >= target.goal else ""
+	match target.kind:
+		"release": return ("best release this quarter: capability %d" % p if p > 0 else "nothing released yet") + done
+		"users": return "%s / %s users%s" % [_num(p), _num(target.goal), done]
+		_: return "%s / %s%s" % [_money(p), _money(target.goal), done]
+
+
+func _end_quarter() -> void:
+	var met: bool = _target_progress() >= target.goal
+	var change := 15 if met else (-10 if target.q == 0 else -25)  # the first quarter is lenient
+	confidence = clampi(confidence + change, 0, 100)
+	var old: String = target.text
+	var q := (day - 1) / DAYS_PER_QUARTER
+	quarter_revenue = 0
+	quarter_best_release = 0
+	if confidence <= 0:
+		_end_game("Fired",
+			"Target: %s. Missed.\n\nThe board has voted to replace you as CEO, effective immediately. Chad will be taking over. He has a podcast." % old)
+		return
+	_new_target(q)
+	var verdict := "Target met. Chad did a little dance." if met else "Target missed. Bitsy unfollowed you."
+	_show_modal("%s board meeting" % _quarter_name(q - 1),
+		"Target: %s\n%s\nBoard Confidence: %d%% (%+d)\n\nNext quarter: %s\n\"%s\"" % [old, verdict, confidence, change, target.text, target.quote],
+		"Back to work", func(): pass)
+	_chet("Board meeting survived. New target's in the Board tab. We got this. Probably.")
+
+
+func _end_game(title: String, body: String) -> void:
+	game_over = true
+	_show_modal(title, body, "Start over", func(): get_tree().reload_current_scene())
 
 
 # --- Staff ------------------------------------------------------------------
