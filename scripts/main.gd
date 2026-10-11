@@ -338,7 +338,7 @@ const MENUS := [
 	{"id": "heat", "name": "Heat", "key": KEY_H, "tab": 3},
 	{"id": "power", "name": "Power", "key": KEY_P, "tab": 4},
 	{"id": "deviation", "name": "Deviation", "key": KEY_V, "tab": 5},
-	{"id": "research", "name": "Research", "key": KEY_E, "tab": 7},
+	{"id": "research", "name": "Research", "key": KEY_E},  # its own full-screen page, not a side tab
 	{"id": "guide", "name": "Guide", "key": KEY_G, "tab": 6},
 ]
 var models_label: Label
@@ -373,6 +373,8 @@ var smog := PackedFloat32Array()  # pollution per tile, 0-100, GRID_W * GRID_H
 var research_done := {}  # research id -> true
 var research_active := ""  # what the research points go towards
 var research_points := 0.0  # banked, spent when the active node is paid off
+var research_page: Control  # full-screen research tree
+var research_tree: Control  # holds the node buttons; draws the lines between them
 var research_label: Label
 var research_bar: ProgressBar
 var research_buttons := {}  # research id -> Button
@@ -536,7 +538,6 @@ func _build_ui() -> void:
 	_build_power_tab()
 	_build_deviation_tab()
 	_build_guide_tab()
-	_build_research_tab()
 
 	hover_tip = Label.new()
 	hover_tip.add_theme_font_size_override("font_size", 13)
@@ -551,6 +552,7 @@ func _build_ui() -> void:
 	cost_label.add_theme_constant_override("outline_size", 4)
 	cost_label.visible = false
 	layer.add_child(cost_label)
+	_build_research_page()
 	_chet(CHET_TIPS[0])
 
 
@@ -589,56 +591,147 @@ func _build_guide_tab() -> void:
 		body.text = section[1] + "\n"
 
 
-func _build_research_tab() -> void:
-	var box := _tab_box("Research")
-	research_label = _wrap_label(box)
-	research_bar = ProgressBar.new()
-	research_bar.custom_minimum_size.y = 16
-	research_bar.show_percentage = false
-	box.add_child(research_bar)
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(300, 400)
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	box.add_child(scroll)
+# Research tree layout: the startup at the left, one row per branch, tiers left to right.
+const RT_NODE := Vector2(200, 56)
+const RT_COL := 235.0  # distance between tiers
+const RT_ROW := 118.0  # distance between branches
+const RT_LEFT := 200.0  # where the first tier starts, after the root
+const RT_TOP := 26.0  # room for the branch name above each row
+
+
+func _build_research_page() -> void:
+	var page := ColorRect.new()
+	page.color = Color(0.07, 0.07, 0.09, 0.97)
+	page.set_anchors_preset(Control.PRESET_FULL_RECT)
+	page.mouse_filter = Control.MOUSE_FILTER_STOP
+	page.visible = false
+	var page_layer := CanvasLayer.new()
+	page_layer.layer = 60  # above the music controls
+	add_child(page_layer)
+	page_layer.add_child(page)
+	research_page = page
 	var col := VBoxContainer.new()
-	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(col)
+	col.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 24)
+	col.add_theme_constant_override("separation", 10)
+	page.add_child(col)
+	var head := HBoxContainer.new()
+	col.add_child(head)
+	var title := Label.new()
+	title.text = "Research"
+	title.add_theme_font_size_override("font_size", 28)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	var close := Button.new()
+	close.text = "Close (E)"
+	close.focus_mode = Control.FOCUS_NONE
+	close.pressed.connect(_toggle_menu.bind("research"))
+	head.add_child(close)
+	research_label = Label.new()
+	col.add_child(research_label)
+	research_bar = ProgressBar.new()
+	research_bar.custom_minimum_size = Vector2(420, 14)
+	research_bar.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	research_bar.show_percentage = false
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color(1.0, 0.8, 0.35)
+	research_bar.add_theme_stylebox_override("fill", fill)
+	col.add_child(research_bar)
+	var center := CenterContainer.new()
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_child(center)
+	var tiers := 0
 	for br in RESEARCH_BRANCHES:
+		tiers = maxi(tiers, RESEARCH.filter(func(r): return r.branch == br.id).size())
+	var tree := Control.new()
+	tree.custom_minimum_size = Vector2(RT_LEFT + (tiers - 1) * RT_COL + RT_NODE.x,
+		RT_TOP + (RESEARCH_BRANCHES.size() - 1) * RT_ROW + RT_NODE.y)
+	tree.draw.connect(_draw_research_lines)
+	center.add_child(tree)
+	research_tree = tree
+	var root := Label.new()
+	root.text = "Garage\nStartup"
+	root.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	root.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	root.size = Vector2(130, RT_NODE.y)
+	root.position = Vector2(0, _rt_root_y() - RT_NODE.y / 2.0)
+	var rs := _panel_style(1.0)
+	rs.bg_color = Color(0.2, 0.18, 0.15)
+	root.add_theme_stylebox_override("normal", rs)
+	tree.add_child(root)
+	for i in RESEARCH_BRANCHES.size():
+		var br: Dictionary = RESEARCH_BRANCHES[i]
 		var h := Label.new()
 		h.text = br.name
 		h.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5))
-		col.add_child(h)
+		h.position = Vector2(RT_LEFT, i * RT_ROW)
+		tree.add_child(h)
 		for r in RESEARCH:
 			if r.branch != br.id:
 				continue
 			var b := Button.new()
-			b.toggle_mode = true
 			b.focus_mode = Control.FOCUS_NONE
-			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			b.add_theme_font_size_override("font_size", 14)
 			b.tooltip_text = r.desc
+			b.size = RT_NODE
+			b.position = _rt_node_pos(r)
 			b.pressed.connect(_pick_research.bind(r.id))
-			col.add_child(b)
+			tree.add_child(b)
 			research_buttons[r.id] = b
 
 
+# Top-left corner of a node: its branch picks the row, its place in the branch picks the tier.
+func _rt_node_pos(r: Dictionary) -> Vector2:
+	var row := RESEARCH_BRANCHES.map(func(b): return b.id).find(r.branch)
+	var tier := RESEARCH.filter(func(x): return x.branch == r.branch).find(r)
+	return Vector2(RT_LEFT + tier * RT_COL, RT_TOP + row * RT_ROW)
+
+
+func _rt_root_y() -> float:
+	return RT_TOP + (RESEARCH_BRANCHES.size() - 1) * RT_ROW / 2.0 + RT_NODE.y / 2.0
+
+
+# Lines into each node: green once it's done, gold if it can be researched now, grey if not yet.
+func _draw_research_lines() -> void:
+	var prev := {}  # branch -> right edge of the node before
+	for r in RESEARCH:
+		var p := _rt_node_pos(r)
+		var to := p + Vector2(0, RT_NODE.y / 2.0)
+		var from: Vector2 = prev.get(r.branch, Vector2(130, _rt_root_y()))
+		var col := Color(0.4, 0.8, 0.45) if research_done.has(r.id) else (Color(1.0, 0.8, 0.35) if _research_open(r) else Color(0.4, 0.4, 0.42))
+		if from.y == to.y:
+			research_tree.draw_line(from, to, col, 3.0)
+		else:  # elbow out of the root
+			var mid := (from.x + to.x) / 2.0
+			research_tree.draw_polyline(PackedVector2Array([from, Vector2(mid, from.y), Vector2(mid, to.y), to]), col, 3.0)
+		prev[r.branch] = p + Vector2(RT_NODE.x, RT_NODE.y / 2.0)
+
+
 func _update_research_tab() -> void:
+	if not research_page.visible:
+		return
 	var active := _research_by_id(research_active)
 	if active.is_empty():
-		research_label.text = "Research: +%.1f points a day\nBanked: %d\nNothing picked" % [_research_per_day(), int(research_points)]
+		research_label.text = "+%.1f points a day     Banked: %d     Nothing picked" % [_research_per_day(), int(research_points)]
 		research_bar.value = 0
 	else:
-		research_label.text = "Research: +%.1f points a day\n%s: %d / %d" % [
+		research_label.text = "+%.1f points a day     %s: %d / %d" % [
 			_research_per_day(), active.name, mini(int(research_points), active.cost), active.cost]
 		research_bar.value = 100.0 * minf(research_points / active.cost, 1.0)
 	for r in RESEARCH:
 		var b: Button = research_buttons[r.id]
-		if research_done.has(r.id):
-			b.text = "   %s   done" % r.name
-		else:
-			b.text = "   %s   %d pts" % [r.name, r.cost]
-		b.disabled = research_done.has(r.id) or not _research_open(r)
-		b.button_pressed = r.id == research_active
+		var done := research_done.has(r.id)
+		var open := _research_open(r)
+		b.text = "%s\n%s" % [r.name, "Done" if done else ("Researching" if r.id == research_active else "%d pts" % r.cost)]
+		b.disabled = done or not open
+		var st := StyleBoxFlat.new()
+		st.set_corner_radius_all(6)
+		st.set_border_width_all(2)
+		st.bg_color = Color(0.16, 0.3, 0.18) if done else (Color(0.22, 0.2, 0.15) if open else Color(0.13, 0.13, 0.15))
+		st.border_color = Color(1.0, 0.8, 0.35) if r.id == research_active else (Color(0.4, 0.8, 0.45) if done else Color(0.3, 0.3, 0.33))
+		for state in ["normal", "hover", "pressed", "disabled"]:
+			b.add_theme_stylebox_override(state, st)
+		b.add_theme_color_override("font_disabled_color", Color(0.85, 0.95, 0.85) if done else Color(0.5, 0.5, 0.52))
+	research_tree.queue_redraw()
 
 
 func _research_by_id(id: String) -> Dictionary:
@@ -995,6 +1088,8 @@ func _safety_theater() -> void:
 
 # A centered pop-up that pauses the game until its button is pressed.
 func _show_modal(title: String, body: String, button_text: String, on_close: Callable, extra: Control = null) -> void:
+	if research_page and research_page.visible:
+		_toggle_menu("research")
 	_speed_before_modal = speed
 	_set_speed(0)
 	var dim := ColorRect.new()
@@ -1095,6 +1190,9 @@ func _toggle_menu(id: String) -> void:
 		build_row.visible = not build_row.visible
 		dragging = false
 		paint_tiles.clear()
+	elif id == "research":
+		research_page.visible = not research_page.visible
+		_update_research_tab()
 	else:
 		var m: Dictionary = MENUS.filter(func(x): return x.id == id)[0]
 		var reopen: bool = not side_panel.visible or tabs.current_tab != m.tab
@@ -1102,7 +1200,8 @@ func _toggle_menu(id: String) -> void:
 		if reopen:
 			tabs.current_tab = m.tab
 	for m in MENUS:
-		var open: bool = build_row.visible if m.id == "build" else side_panel.visible and tabs.current_tab == m.get("tab", -1)
+		var open: bool = build_row.visible if m.id == "build" else (research_page.visible if m.id == "research" \
+			else side_panel.visible and tabs.current_tab == m.get("tab", -1))
 		menu_buttons[m.id].button_pressed = open
 
 
@@ -1230,6 +1329,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_select_tool(TOOLS.size() - 1)
 		elif event.keycode == KEY_SPACE:
 			_set_speed(1 if speed == 0 else 0)
+		elif event.keycode == KEY_ESCAPE and research_page.visible:
+			_toggle_menu("research")
 		elif event.keycode == KEY_ESCAPE:
 			dragging = false
 			paint_tiles.clear()
