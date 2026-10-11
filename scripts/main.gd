@@ -217,7 +217,8 @@ const CHET_TIPS := [
 
 # Research tree: four branches, each a short chain you research in order. Researchers at desks
 # make research points. A node can unlock Build menu items and/or add a percentage bonus.
-# Bonus keys: structure_discount, rack_discount, rack_heat, rack_power, cooling, compute, productivity.
+# Bonus keys: structure_discount, rack_discount, rack_heat, rack_power, cooling, cooler_power, compute,
+# productivity, revenue. A negative value is a drawback; "con" names it on the tree in red.
 const RESEARCH_BRANCHES := [
 	{"id": "construction", "name": "Construction"},
 	{"id": "equipment", "name": "Equipment"},
@@ -230,19 +231,22 @@ const RESEARCH := [
 	{"id": "roofs", "branch": "construction", "name": "Load-Bearing Roofs", "cost": 45, "unlocks": ["solar"],
 		"desc": "Unlocks rooftop Solar Panels. The roof was not, technically, load-bearing before."},
 	{"id": "insulation", "branch": "construction", "name": "Spray Foam Insulation", "cost": 90, "rack_heat": -0.2,
-		"desc": "Racks heat rooms 20% less."},
+		"rack_discount": -0.05, "con": "+5% Server Rack cost",
+		"desc": "Racks heat rooms 20% less. Racks cost 5% more: the foam gets everywhere."},
 	{"id": "modular", "branch": "construction", "name": "Modular Datacenters", "cost": 160, "rack_discount": 0.2,
 		"desc": "Server Racks 20% cheaper. Shipped flat-pack, with an allen key."},
 	{"id": "diesel", "branch": "equipment", "name": "Diesel Know-How", "cost": 20, "unlocks": ["gen_diesel"],
 		"desc": "Unlocks the Diesel Generator."},
 	{"id": "hvac", "branch": "equipment", "name": "Industrial HVAC", "cost": 45, "cooling": 0.25,
-		"desc": "All coolers 25% stronger."},
+		"cooler_power": 0.1, "con": "+10% cooler power use",
+		"desc": "All coolers 25% stronger, and they use 10% more power."},
 	{"id": "lithium", "branch": "equipment", "name": "Lithium Supply Deal", "cost": 90, "unlocks": ["battery", "gen_large"],
 		"desc": "Unlocks Batteries and the Large Diesel."},
 	{"id": "turbines", "branch": "equipment", "name": "Trailer Turbines", "cost": 160, "unlocks": ["power_plant"],
 		"desc": "Unlocks the Portable Power Plant."},
 	{"id": "overclock", "branch": "chips", "name": "Overclocking", "cost": 20, "compute": 0.15,
-		"desc": "Racks make 15% more compute. Warranty void."},
+		"rack_heat": 0.1, "con": "+10% rack heat",
+		"desc": "Racks make 15% more compute and 10% more heat. Warranty void."},
 	{"id": "silicon", "branch": "chips", "name": "Custom Silicon", "cost": 45, "compute": 0.25,
 		"desc": "Racks make 25% more compute."},
 	{"id": "lowpower", "branch": "chips", "name": "Low-Power Chips", "cost": 90, "rack_power": -0.25, "rack_heat": -0.15,
@@ -250,7 +254,8 @@ const RESEARCH := [
 	{"id": "wafer", "branch": "chips", "name": "Wafer-Scale Chips", "cost": 160, "compute": 0.4,
 		"desc": "Racks make 40% more compute. One chip, the size of a pizza."},
 	{"id": "snacks", "branch": "productivity", "name": "Free Snacks", "cost": 20, "productivity": 0.1,
-		"desc": "Staff 10% more productive."},
+		"revenue": -0.01, "con": "-1% revenue",
+		"desc": "Staff 10% more productive. The snack budget eats 1% of revenue."},
 	{"id": "standups", "branch": "productivity", "name": "Daily Standups", "cost": 45, "productivity": 0.1,
 		"desc": "Staff 10% more productive, net of the standups."},
 	{"id": "hustle", "branch": "productivity", "name": "Hustle Culture", "cost": 90, "productivity": 0.15,
@@ -592,7 +597,7 @@ func _build_guide_tab() -> void:
 
 
 # Research tree layout: the startup at the left, one row per branch, tiers left to right.
-const RT_NODE := Vector2(215, 56)
+const RT_NODE := Vector2(215, 72)
 const RT_COL := 245.0  # distance between tiers
 const RT_ROW := 118.0  # distance between branches
 const RT_LEFT := 200.0  # where the first tier starts, after the root
@@ -683,6 +688,16 @@ func _build_research_page() -> void:
 			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			icon.draw.connect(_draw_research_icon.bind(icon, r.id))
 			b.add_child(icon)
+			if r.has("con"):  # the drawback, in red along the bottom
+				var con := Label.new()
+				con.text = r.con
+				con.add_theme_font_size_override("font_size", 12)
+				con.add_theme_color_override("font_color", Color(1.0, 0.45, 0.4))
+				con.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				con.position = Vector2(46, RT_NODE.y - 22)
+				con.size = Vector2(RT_NODE.x - 52, 18)
+				con.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				b.add_child(con)
 
 
 # Top-left corner of a node: its branch picks the row, its place in the branch picks the tier.
@@ -822,6 +837,7 @@ func _update_research_tab() -> void:
 		st.set_corner_radius_all(6)
 		st.set_border_width_all(2)
 		st.content_margin_left = 46  # room for the icon
+		st.content_margin_bottom = 16 if r.has("con") else 0
 		st.bg_color = Color(0.16, 0.3, 0.18) if done else (Color(0.22, 0.2, 0.15) if open else Color(0.13, 0.13, 0.15))
 		st.border_color = Color(1.0, 0.8, 0.35) if r.id == research_active else (Color(0.4, 0.8, 0.45) if done else Color(0.3, 0.3, 0.33))
 		for state in ["normal", "hover", "pressed", "disabled"]:
@@ -1814,7 +1830,7 @@ func _user_target() -> float:
 func _tick_users() -> void:
 	var target := _user_target()
 	users += (target - users) * (0.03 if target > users else 0.02)
-	revenue_today = int(users * REVENUE_PER_USER)
+	revenue_today = int(users * REVENUE_PER_USER * (1.0 + _research_bonus("revenue")))
 	money += revenue_today
 	quarter_revenue += revenue_today
 
@@ -2128,7 +2144,7 @@ func _update_staff(delta: float) -> void:
 func _power_demand() -> float:
 	var kw := _racks() * RACK_KW * (1.0 + _research_bonus("rack_power"))
 	for c in _coolers():
-		kw += COOLERS[c[1]].power
+		kw += COOLERS[c[1]].power * (1.0 + _research_bonus("cooler_power"))
 	kw += objects.values().count("redteam") * REDTEAM_KW
 	return kw
 
