@@ -314,6 +314,7 @@ var _tip := 0
 var _time := 0.0
 
 var camera: Camera2D
+var world: Node2D  # the canal, farms, highway and town around your property
 var top_label: Label
 var chet_label: Label
 var cost_label: Label
@@ -396,6 +397,9 @@ func _ready() -> void:
 	_add_staff("researcher", _tile_center(Vector2i(27, 22)), FOUNDER_SALARY)
 	_add_staff("engineer", _tile_center(Vector2i(28, 22)), FOUNDER_SALARY)
 
+	world = preload("res://scripts/world.gd").new()
+	world.show_behind_parent = true
+	add_child(world)
 	camera = Camera2D.new()
 	camera.position = _tile_center(Vector2i(33, 22))
 	camera.zoom = Vector2(1.4, 1.4)
@@ -2297,7 +2301,7 @@ func _describe_hover() -> String:
 				return "%s, %s\nJob: %s\nProductivity: %d%%" % [s.name, ROLES[s.role].name, JOBS[s.job].name, int(s.productivity * 100.0)]
 	var t := hover
 	if not _in_bounds(t):
-		return ""
+		return world.describe(t)  # off your property
 	var lines := []
 	if view_level == 1:
 		if roof_objects.has(t):

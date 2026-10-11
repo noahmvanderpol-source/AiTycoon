@@ -16,6 +16,13 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 - WASD / arrows or middle-drag: pan. Mouse wheel: zoom
 - Furniture needs a floor. Staff can only walk on floors and through doors.
 
+## The map
+- Your property is the fenced, gridded lot in the middle; you can only build there.
+- North: irrigated farms and farmhouses (not yours yet, buyable later), then the canal along the top edge. A water pipeline runs from the canal to your north fence (no water until you win water rights).
+- West: Highway CZ-99, with an access road to your west fence. East: open desert.
+- South: the town of Dustwater (15 houses, a gas station) with empty community lots for a future park or library.
+- Hover anything off your property to see what it is.
+
 ## Models
 - Name your company when the game starts.
 - Server Racks give compute (1 per rack per day). The **Models** tab on the right trains a Small, Medium or Large model; bigger ones take longer and cost more, and each new model builds on your best one.
