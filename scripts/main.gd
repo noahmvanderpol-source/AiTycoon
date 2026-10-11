@@ -28,8 +28,8 @@ const HOURS_PER_STEP := 3.0
 const GENERATORS := {
 	"gen_portable": {"kw": 20.0, "fuel": 2.75, "smog": 0.25, "size": Vector2i(1, 1)},
 	"gen_diesel": {"kw": 60.0, "fuel": 2.0, "smog": 0.25, "size": Vector2i(2, 1)},
-	"gen_large": {"kw": 200.0, "fuel": 1.4, "smog": 0.225, "size": Vector2i(6, 2)},
-	"power_plant": {"kw": 800.0, "fuel": 0.9, "smog": 0.125, "size": Vector2i(5, 3)},  # trailer gas turbines, as real datacenters do
+	"gen_large": {"kw": 200.0, "fuel": 1.4, "smog": 0.225, "size": Vector2i(3, 2)},
+	"power_plant": {"kw": 800.0, "fuel": 0.9, "smog": 0.125, "size": Vector2i(6, 3)},  # trailer gas turbines, as real datacenters do
 }
 const GRID_KW := 40.0  # the utility's cap; lobbying for more comes later
 const GRID_PRICE := 1.2  # $ per kWh. Its smog lands in someone else's zip code
@@ -1930,21 +1930,20 @@ func _draw_gen_diesel(p: Vector2, t: Vector2i) -> void:
 
 func _draw_gen_large(p: Vector2, t: Vector2i) -> void:
 	# A shipping-container genset.
-	_draw_gen_body(p, t, Vector2i(6, 2), 26, Color(0.75, 0.75, 0.72), [Vector2(40, -26), Vector2(150, -26)])
-	for k in 22:  # container ribs
-		draw_line(p + Vector2(8 + k * 8, 34), p + Vector2(8 + k * 8, 56), Color(0.55, 0.55, 0.52))
-	for x in [36, 146]:
+	_draw_gen_body(p, t, Vector2i(3, 2), 26, Color(0.75, 0.75, 0.72), [Vector2(24, -26), Vector2(72, -26)])
+	for k in 10:  # container ribs
+		draw_line(p + Vector2(8 + k * 9, 34), p + Vector2(8 + k * 9, 56), Color(0.55, 0.55, 0.52))
+	for x in [20, 68]:
 		draw_rect(Rect2(p + Vector2(x, -26), Vector2(8, 14)), Color(0.2, 0.2, 0.2))  # exhaust stacks
 
 
 func _draw_power_plant(p: Vector2, t: Vector2i) -> void:
 	# Trailer-mounted gas turbines, as real datacenters do.
-	draw_rect(Rect2(p + Vector2(4, 82), Vector2(152, 8)), Color(0.15, 0.15, 0.15))  # trailer beds
-	for x in [20, 70, 120]:
-		draw_circle(p + Vector2(x, 90), 5, Color(0.1, 0.1, 0.1))  # wheels
-	_draw_gen_body(p, t, Vector2i(5, 3), 30, Color(0.9, 0.9, 0.92), [Vector2(30, -34), Vector2(80, -34), Vector2(130, -34)])
-	for x in [24, 74, 124]:
+	_draw_gen_body(p, t, Vector2i(6, 3), 30, Color(0.9, 0.9, 0.92), [Vector2(36, -34), Vector2(96, -34), Vector2(156, -34)])
+	for x in [30, 90, 150]:
 		draw_rect(Rect2(p + Vector2(x, -34), Vector2(12, 24)), Color(0.55, 0.55, 0.58))  # turbine stacks
+	for x in [24, 72, 120, 168]:
+		draw_circle(p + Vector2(x, 92), 5, Color(0.1, 0.1, 0.1))  # trailer wheels
 	draw_string(ThemeDB.fallback_font, p + Vector2(10, 70), "TEMPORARY*", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.3, 0.3, 0.35))
 
 

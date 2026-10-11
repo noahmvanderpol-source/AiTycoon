@@ -47,8 +47,8 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 | --- | --- | --- | --- |
 | Portable Generator ($2,500, 1x1) | 20 kW | $2.75/kWh | high |
 | Diesel Generator ($25,000, 2x1) | 60 kW | $2.00/kWh | high |
-| Large Diesel ($90,000, 6x2) | 200 kW | $1.40/kWh | high |
-| Portable Power Plant ($600,000, 5x3) | 800 kW | $0.90/kWh | half |
+| Large Diesel ($90,000, 3x2) | 200 kW | $1.40/kWh | high |
+| Portable Power Plant ($600,000, 6x3) | 800 kW | $0.90/kWh | half |
 
 - Generators and the grid hookup go outdoors. Short on power, racks and ACs all run at the share that's covered (a brownout).
 - Pollution is 0-100 per tile (the Power panel shows the worst tile). Generators puff smog onto their tile, and it drifts to neighbouring tiles and slowly clears. A faint haze shows always; the Power panel tints it brown.
