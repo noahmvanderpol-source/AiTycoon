@@ -359,6 +359,8 @@ var theater_button: Button
 var rush_check: CheckBox
 var power_label: Label
 var build_cat := "structure"  # which build category's tools the build bar shows
+var build_popup: Control  # scrollable list of the open category's tools, just above the bottom bar
+var bottom_bar: Control
 var power_ratio := 1.0  # share of demand covered last step
 var power_bill := 0  # yesterday's fuel and grid bill
 var _power_cost := 0.0  # today's so far
@@ -468,6 +470,7 @@ func _build_ui() -> void:
 	bottom.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE, Control.PRESET_MODE_MINSIZE, 8)
 	bottom.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	layer.add_child(bottom)
+	bottom_bar = bottom
 	var col := VBoxContainer.new()
 	bottom.add_child(col)
 	chet_label = Label.new()
@@ -485,23 +488,38 @@ func _build_ui() -> void:
 		cb.text = c.name
 		cb.toggle_mode = true
 		cb.focus_mode = Control.FOCUS_NONE
-		cb.pressed.connect(_set_build_cat.bind(c.id))
+		cb.pressed.connect(_click_build_cat.bind(c.id))
 		cat_row.add_child(cb)
 		cat_buttons[c.id] = cb
-	var row := HFlowContainer.new()  # wraps when a category has lots of tools
-	build_box.add_child(row)
+	var gap := Control.new()
+	gap.custom_minimum_size.x = 16
+	cat_row.add_child(gap)
 	level_button = Button.new()
 	level_button.focus_mode = Control.FOCUS_NONE
-	level_button.add_theme_font_size_override("font_size", 14)
 	level_button.pressed.connect(_toggle_level)
-	row.add_child(level_button)
+	cat_row.add_child(level_button)
+	build_popup = PanelContainer.new()
+	build_popup.add_theme_stylebox_override("panel", _panel_style())
+	build_popup.visible = false
+	layer.add_child(build_popup)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(340, 260)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	build_popup.add_child(scroll)
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(list)
 	for i in TOOLS.size():
 		var b := Button.new()
 		b.toggle_mode = true
 		b.focus_mode = Control.FOCUS_NONE
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.add_theme_font_size_override("font_size", 14)
 		b.pressed.connect(_select_tool.bind(i))
-		row.add_child(b)
+		if TOOLS[i].id == "demolish":
+			cat_row.add_child(b)  # demolish works in every category, so it stays on the bar
+		else:
+			list.add_child(b)
 		tool_buttons.append(b)
 	var menu_row := HBoxContainer.new()
 	col.add_child(menu_row)
@@ -1073,9 +1091,22 @@ func _toggle_level() -> void:
 
 func _set_build_cat(id: String) -> void:
 	build_cat = id
-	for c in cat_buttons:
-		cat_buttons[c].button_pressed = c == id
 	_label_tools()
+	_show_build_popup(build_row.visible)
+
+
+# Clicking the open category's tab again folds its list away.
+func _click_build_cat(id: String) -> void:
+	if id == build_cat and build_popup.visible:
+		_show_build_popup(false)
+	else:
+		_set_build_cat(id)
+
+
+func _show_build_popup(on: bool) -> void:
+	build_popup.visible = on
+	for c in cat_buttons:
+		cat_buttons[c].button_pressed = on and c == build_cat
 
 
 func _label_tools() -> void:
@@ -1093,6 +1124,7 @@ func _label_tools() -> void:
 func _toggle_menu(id: String) -> void:
 	if id == "build":
 		build_row.visible = not build_row.visible
+		_show_build_popup(build_row.visible)
 		dragging = false
 		paint_tiles.clear()
 	else:
@@ -1158,6 +1190,8 @@ func _money(v: int) -> String:
 # --- Loop and input ---------------------------------------------------------
 
 func _process(delta: float) -> void:
+	if build_popup.visible:  # sits just above the bottom bar, whose height changes
+		build_popup.position = Vector2(8, bottom_bar.position.y - build_popup.size.y - 4)
 	_time += delta
 	var dir := Vector2.ZERO
 	if modal:
