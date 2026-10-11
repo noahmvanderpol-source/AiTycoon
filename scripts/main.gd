@@ -3,6 +3,7 @@ extends Node2D
 ## construction tools (Prison Architect style: you build, staff wander around).
 
 const TILE := 32
+const WALL_H := 22.0  # how tall walls look in the three-quarter view
 const GRID_W := 64
 const GRID_H := 48
 const PAN_SPEED := 700.0
@@ -458,16 +459,44 @@ func _draw() -> void:
 		draw_line(Vector2(x, a.y) * TILE, Vector2(x, b.y) * TILE, grid)
 	for y in range(a.y, b.y + 1):
 		draw_line(Vector2(a.x, y) * TILE, Vector2(b.x, y) * TILE, grid)
-	for t in wall_tiles:
-		if wall_tiles[t] == "wall":
-			_draw_wall(t)
-		else:
-			_draw_door(t)
-	for t in objects:
-		call("_draw_" + objects[t], Vector2(t) * TILE, t)
+
+	# Three-quarter view: things have height and are drawn back-to-front, row by row,
+	# so anything further south overlaps what's behind it.
+	var rows := {}
+	for t in wall_tiles.keys() + objects.keys():
+		if not rows.has(t.y):
+			rows[t.y] = []
+		rows[t.y].append(t)
 	for s in staff:
-		_draw_person(s.pos, s.shirt)
+		var r := int(s.pos.y / TILE)
+		if not rows.has(r):
+			rows[r] = []
+		rows[r].append(s)
+	for y in range(a.y, b.y + 2):
+		for item in rows.get(y, []):
+			if item is Dictionary:
+				_draw_person(item.pos, item.shirt)
+			elif wall_tiles.get(item) == "wall":
+				_draw_wall(item)
+			elif wall_tiles.has(item):
+				_draw_door(item)
+			else:
+				call("_draw_" + objects[item], Vector2(item) * TILE, item)
 	_draw_preview()
+
+
+func _ellipse(c: Vector2, rx: float, ry: float, col: Color) -> void:
+	var pts := PackedVector2Array()
+	for i in 16:
+		var ang := TAU * i / 16.0
+		pts.append(c + Vector2(cos(ang) * rx, sin(ang) * ry))
+	draw_colored_polygon(pts, col)
+
+
+# A box standing on the ground: top face lifted by `h`, front face below it.
+func _box(base: Rect2, h: float, top: Color, front: Color) -> void:
+	draw_rect(Rect2(base.position - Vector2(0, h), base.size), top)
+	draw_rect(Rect2(Vector2(base.position.x, base.end.y - h), Vector2(base.size.x, h)), front)
 
 
 func _draw_sand(t: Vector2i) -> void:
@@ -475,9 +504,10 @@ func _draw_sand(t: Vector2i) -> void:
 	if h % 5 == 0:
 		draw_circle(Vector2(t) * TILE + Vector2(h % 23 + 4, (h / 23) % 23 + 4), 1.5, Color(0.7, 0.58, 0.38))
 	if h % 37 == 0:  # the occasional scrappy desert shrub
-		var c := Vector2(t) * TILE + Vector2(16, 16)
-		draw_circle(c, 6, Color(0.5, 0.55, 0.3))
-		draw_circle(c + Vector2(4, -3), 4, Color(0.56, 0.62, 0.34))
+		var c := Vector2(t) * TILE + Vector2(16, 20)
+		_ellipse(c + Vector2(2, 4), 9, 4, Color(0, 0, 0, 0.15))
+		draw_circle(c - Vector2(0, 4), 6, Color(0.48, 0.53, 0.28))
+		draw_circle(c + Vector2(4, -8), 4, Color(0.58, 0.64, 0.35))
 
 
 func _draw_floor(t: Vector2i) -> void:
@@ -488,56 +518,76 @@ func _draw_floor(t: Vector2i) -> void:
 	else:
 		draw_rect(r, Color(0.66, 0.65, 0.62))
 		draw_rect(r, Color(0.55, 0.54, 0.51), false, 1.0)
+	if wall_tiles.get(t + Vector2i.UP) == "wall":  # shadow cast by the wall behind
+		draw_rect(Rect2(r.position, Vector2(TILE, 8)), Color(0, 0, 0, 0.2))
 
 
 func _draw_wall(t: Vector2i) -> void:
 	var p := Vector2(t) * TILE
-	draw_rect(Rect2(p, Vector2(TILE, TILE)), Color(0.24, 0.23, 0.25))
-	draw_rect(Rect2(p, Vector2(TILE, 5)), Color(0.42, 0.41, 0.44))
+	_box(Rect2(p, Vector2(TILE, TILE)), WALL_H, Color(0.5, 0.48, 0.47), Color(0.3, 0.29, 0.32))
+	var edge := Color(0.2, 0.19, 0.21)
+	var top := p - Vector2(0, WALL_H)
+	if wall_tiles.get(t + Vector2i.UP) != "wall":
+		draw_line(top, top + Vector2(TILE, 0), edge, 2.0)
+	if wall_tiles.get(t + Vector2i.LEFT) != "wall":
+		draw_line(top, top + Vector2(0, TILE + WALL_H), edge, 2.0)
+	if wall_tiles.get(t + Vector2i.RIGHT) != "wall":
+		draw_line(top + Vector2(TILE, 0), top + Vector2(TILE, TILE + WALL_H), edge, 2.0)
 
 
 func _draw_door(t: Vector2i) -> void:
 	var p := Vector2(t) * TILE
-	var horizontal := wall_tiles.has(t + Vector2i.LEFT) or wall_tiles.has(t + Vector2i.RIGHT)
-	var frame := Color(0.24, 0.23, 0.25)
-	var wood := Color(0.6, 0.42, 0.25)
-	if horizontal:
-		draw_rect(Rect2(p, Vector2(4, TILE)), frame)
-		draw_rect(Rect2(p + Vector2(TILE - 4, 0), Vector2(4, TILE)), frame)
-		draw_rect(Rect2(p + Vector2(4, 13), Vector2(TILE - 8, 6)), wood)
+	var top := Color(0.5, 0.48, 0.47)
+	var front := Color(0.3, 0.29, 0.32)
+	var wood := Color(0.62, 0.43, 0.25)
+	if wall_tiles.has(t + Vector2i.LEFT) or wall_tiles.has(t + Vector2i.RIGHT):
+		# Door in a horizontal wall: two posts, a lintel, and the door swung open.
+		draw_rect(Rect2(p + Vector2(6, TILE - WALL_H - 4), Vector2(7, WALL_H + 2)), wood.darkened(0.25))
+		_box(Rect2(p, Vector2(5, TILE)), WALL_H, top, front)
+		_box(Rect2(p + Vector2(TILE - 5, 0), Vector2(5, TILE)), WALL_H, top, front)
+		draw_rect(Rect2(p - Vector2(0, WALL_H), Vector2(TILE, 6)), top)
 	else:
-		draw_rect(Rect2(p, Vector2(TILE, 4)), frame)
-		draw_rect(Rect2(p + Vector2(0, TILE - 4), Vector2(TILE, 4)), frame)
-		draw_rect(Rect2(p + Vector2(13, 4), Vector2(6, TILE - 8)), wood)
+		# Door in a vertical wall: a thin wooden slab in line with the wall.
+		_box(Rect2(p + Vector2(0, 0), Vector2(TILE, 5)), WALL_H, top, front)
+		_box(Rect2(p + Vector2(13, 5), Vector2(6, TILE - 5)), WALL_H * 0.8, wood, wood.darkened(0.3))
 
 
 func _draw_desk(p: Vector2, _t: Vector2i) -> void:
-	draw_circle(p + Vector2(16, 26), 6, Color(0.2, 0.2, 0.22))  # chair
-	draw_rect(Rect2(p + Vector2(2, 3), Vector2(28, 17)), Color(0.58, 0.4, 0.24))
-	draw_rect(Rect2(p + Vector2(9, 5), Vector2(14, 8)), Color(0.12, 0.12, 0.14))
-	draw_rect(Rect2(p + Vector2(10, 6), Vector2(12, 6)), Color(0.45, 0.75, 1.0))
+	_ellipse(p + Vector2(16, 28), 15, 4, Color(0, 0, 0, 0.2))
+	draw_circle(p + Vector2(16, 5), 6, Color(0.22, 0.22, 0.25))  # chair behind the desk
+	_box(Rect2(p + Vector2(2, 14), Vector2(28, 14)), 8, Color(0.62, 0.44, 0.27), Color(0.42, 0.29, 0.17))
+	draw_rect(Rect2(p + Vector2(14, 6), Vector2(4, 4)), Color(0.12, 0.12, 0.14))  # monitor stand
+	draw_rect(Rect2(p + Vector2(7, -4), Vector2(18, 12)), Color(0.12, 0.12, 0.14))
+	draw_rect(Rect2(p + Vector2(9, -2), Vector2(14, 8)), Color(0.45, 0.75, 1.0))
 
 
 func _draw_rack(p: Vector2, t: Vector2i) -> void:
-	draw_rect(Rect2(p + Vector2(3, 2), Vector2(26, 28)), Color(0.09, 0.09, 0.11))
+	_ellipse(p + Vector2(18, 28), 14, 4, Color(0, 0, 0, 0.25))
+	_box(Rect2(p + Vector2(4, 8), Vector2(24, 22)), 22, Color(0.32, 0.33, 0.37), Color(0.08, 0.08, 0.1))
 	var tick := int(_time * 5.0)
-	for i in 5:
-		var y := p.y + 6 + i * 5
-		draw_line(Vector2(p.x + 6, y + 3), Vector2(p.x + 22, y + 3), Color(0.25, 0.25, 0.3))
+	for i in 4:
+		var y := p.y + 10 + i * 5
+		draw_line(Vector2(p.x + 7, y + 2), Vector2(p.x + 21, y + 2), Color(0.25, 0.25, 0.3))
 		var on := _hash(t, i * 1000 + tick) % 3 != 0
 		draw_rect(Rect2(Vector2(p.x + 23, y), Vector2(3, 3)), Color(0.3, 1.0, 0.5) if on else Color(0.1, 0.3, 0.15))
 
 
 func _draw_ficus(p: Vector2, _t: Vector2i) -> void:
-	draw_circle(p + Vector2(16, 16), 7, Color(0.55, 0.33, 0.2))
-	for o in [Vector2(-6, -4), Vector2(5, -6), Vector2(6, 4), Vector2(-4, 6), Vector2(0, 0)]:
-		draw_circle(p + Vector2(16, 16) + o, 5, Color(0.25, 0.55, 0.28))
+	_ellipse(p + Vector2(17, 28), 9, 3, Color(0, 0, 0, 0.2))
+	_box(Rect2(p + Vector2(10, 16), Vector2(12, 12)), 6, Color(0.35, 0.22, 0.14), Color(0.6, 0.36, 0.2))
+	for o in [Vector2(-7, 0), Vector2(6, -2), Vector2(0, -8), Vector2(-4, -14), Vector2(5, -12), Vector2(0, -2)]:
+		draw_circle(p + Vector2(16, 6) + o, 6, Color(0.22, 0.5, 0.25))
+	draw_circle(p + Vector2(18, -6), 4, Color(0.32, 0.62, 0.32))
 
 
 func _draw_person(pos: Vector2, shirt: Color) -> void:
-	draw_circle(pos + Vector2(0, 2), 9, Color(0, 0, 0, 0.2))
-	draw_circle(pos, 8, shirt)
-	draw_circle(pos, 4.5, Color(0.93, 0.78, 0.62))
+	var feet := pos + Vector2(0, 8)
+	_ellipse(feet, 8, 3, Color(0, 0, 0, 0.25))
+	draw_rect(Rect2(feet + Vector2(-5, -6), Vector2(4, 6)), Color(0.2, 0.22, 0.3))
+	draw_rect(Rect2(feet + Vector2(1, -6), Vector2(4, 6)), Color(0.2, 0.22, 0.3))
+	draw_rect(Rect2(feet + Vector2(-7, -19), Vector2(14, 14)), shirt)
+	draw_circle(feet + Vector2(0, -24), 6, Color(0.93, 0.78, 0.62))
+	draw_rect(Rect2(feet + Vector2(-6, -31), Vector2(12, 4)), Color(0.3, 0.2, 0.12))
 
 
 func _draw_preview() -> void:
