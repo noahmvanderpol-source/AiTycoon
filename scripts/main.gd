@@ -3,6 +3,7 @@ extends Node2D
 ## construction tools (Prison Architect style: you build, staff wander around).
 
 const TILE := 32
+const SUB := TILE / 2  # each tile splits into a 2x2 subgrid for small, precisely placed items
 const WALL_H := 22.0  # how tall walls look in the three-quarter view
 const GRID_W := 64
 const GRID_H := 48
@@ -13,6 +14,7 @@ const SALARY_PER_DAY := 1200
 const RACK_POWER_PER_DAY := 400
 
 # Every buildable thing. layer: which map layer it lives on. drag: how the mouse places it.
+# Things on the "sub" layer take one subgrid cell (a quarter tile) and don't block walking.
 const TOOLS := [
 	{"id": "carpet", "name": "Carpet", "layer": "floor", "cost": 200, "drag": "fill"},
 	{"id": "concrete", "name": "Concrete", "layer": "floor", "cost": 100, "drag": "fill"},
@@ -20,7 +22,8 @@ const TOOLS := [
 	{"id": "door", "name": "Door", "layer": "wall", "cost": 2500, "drag": "single"},
 	{"id": "desk", "name": "Desk", "layer": "object", "cost": 6000, "drag": "paint"},
 	{"id": "rack", "name": "Server Rack", "layer": "object", "cost": 40000, "drag": "paint"},
-	{"id": "ficus", "name": "Morale Ficus", "layer": "object", "cost": 300, "drag": "paint"},
+	{"id": "ficus", "name": "Ficus", "layer": "object", "cost": 300, "drag": "paint"},
+	{"id": "coffee", "name": "Coffee Maker", "layer": "sub", "cost": 1500, "drag": "paint"},
 	{"id": "demolish", "name": "Demolish", "layer": "", "cost": 0, "drag": "fill"},
 ]
 
@@ -38,12 +41,14 @@ const CHET_TIPS := [
 var floor_tiles := {}  # Vector2i -> "carpet" / "concrete"
 var wall_tiles := {}  # Vector2i -> "wall" / "door"
 var objects := {}  # Vector2i -> "desk" / "rack" / "ficus"
+var sub_objects := {}  # subgrid cell Vector2i -> "coffee"
 
 var money := 2_000_000
 var day := 1
 var speed := 1
 var tool_index := 0
 var hover := Vector2i(-1, -1)
+var hover_sub := Vector2i(-1, -1)
 var dragging := false
 var drag_start := Vector2i.ZERO
 var paint_tiles := {}
@@ -157,6 +162,7 @@ func _build_ui() -> void:
 		b.text = "%s  %s" % [key, tool.name] if tool.cost == 0 else "%s  %s  %s" % [key, tool.name, _money(tool.cost)]
 		b.toggle_mode = true
 		b.focus_mode = Control.FOCUS_NONE
+		b.add_theme_font_size_override("font_size", 14)
 		b.pressed.connect(_select_tool.bind(i))
 		row.add_child(b)
 		tool_buttons.append(b)
@@ -225,8 +231,9 @@ func _process(delta: float) -> void:
 		_chet(CHET_TIPS[_tip])
 
 	hover = _mouse_tile()
+	hover_sub = Vector2i((get_global_mouse_position() / SUB).floor())
 	if paint_tiles.size() > 0 and dragging and _in_bounds(hover):
-		paint_tiles[hover] = true
+		paint_tiles[_cursor()] = true
 	_update_staff(delta * maxf(speed, 0.0))
 	_update_hud()
 	_update_cost_label()
@@ -266,7 +273,7 @@ func _unhandled_input(event: InputEvent) -> void:
 					drag_start = hover
 					paint_tiles.clear()
 					if TOOLS[tool_index].drag == "paint":
-						paint_tiles[hover] = true
+						paint_tiles[_cursor()] = true
 			MOUSE_BUTTON_RIGHT:
 				if dragging:
 					dragging = false
@@ -303,11 +310,32 @@ func _tile_center(t: Vector2i) -> Vector2:
 	return (Vector2(t) + Vector2(0.5, 0.5)) * TILE
 
 
+func _is_sub_tool() -> bool:
+	return TOOLS[tool_index].layer == "sub"
+
+
+# The cell under the mouse for the current tool: a tile, or a subgrid cell for small items.
+func _cursor() -> Vector2i:
+	return hover_sub if _is_sub_tool() else hover
+
+
+func _tile_of_sub(c: Vector2i) -> Vector2i:
+	return Vector2i(floori(c.x / 2.0), floori(c.y / 2.0))
+
+
+func _subs_in(t: Vector2i) -> Array:
+	var out := []
+	for o in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)]:
+		if sub_objects.has(t * 2 + o):
+			out.append(t * 2 + o)
+	return out
+
+
 func _drag_tiles() -> Array:
 	var tool: Dictionary = TOOLS[tool_index]
 	match tool.drag:
 		"single":
-			return [hover]
+			return [_cursor()]
 		"paint":
 			return paint_tiles.keys()
 	var a := Vector2i(mini(drag_start.x, hover.x), mini(drag_start.y, hover.y))
@@ -323,19 +351,23 @@ func _drag_tiles() -> Array:
 
 
 func _can_place(id: String, t: Vector2i) -> bool:
+	if id == "coffee":  # t is a subgrid cell
+		var tile := _tile_of_sub(t)
+		return _in_bounds(tile) and floor_tiles.has(tile) and not wall_tiles.has(tile) \
+			and not objects.has(tile) and not sub_objects.has(t)
 	if not _in_bounds(t):
 		return false
 	match id:
 		"carpet", "concrete":
 			return floor_tiles.get(t) != id
 		"wall":
-			return not wall_tiles.has(t) and not objects.has(t)
+			return not wall_tiles.has(t) and not objects.has(t) and _subs_in(t).is_empty()
 		"door":
-			return wall_tiles.get(t) != "door" and not objects.has(t)
+			return wall_tiles.get(t) != "door" and not objects.has(t) and _subs_in(t).is_empty()
 		"demolish":
-			return objects.has(t) or wall_tiles.has(t) or floor_tiles.has(t)
+			return objects.has(t) or wall_tiles.has(t) or floor_tiles.has(t) or not _subs_in(t).is_empty()
 	# furniture
-	return floor_tiles.has(t) and not wall_tiles.has(t) and not objects.has(t)
+	return floor_tiles.has(t) and not wall_tiles.has(t) and not objects.has(t) and _subs_in(t).is_empty()
 
 
 func _tool_by_id(id: String) -> Dictionary:
@@ -365,11 +397,19 @@ func _commit(tiles: Array) -> void:
 			"floor": floor_tiles[t] = tool.id
 			"wall": wall_tiles[t] = tool.id
 			"object": objects[t] = tool.id
+			"sub": sub_objects[t] = tool.id
 	_after_build()
 
 
 func _demolish(t: Vector2i) -> void:
 	# Removes the top-most thing on a tile and refunds half its price.
+	# Small subgrid items go first, all of the tile's at once.
+	var subs := _subs_in(t)
+	if not subs.is_empty():
+		for c in subs:
+			money += int(_tool_by_id(sub_objects[c]).cost / 2)
+			sub_objects.erase(c)
+		return
 	for layer in [objects, wall_tiles, floor_tiles]:
 		if layer.has(t):
 			money += int(_tool_by_id(layer[t]).cost / 2)
@@ -455,6 +495,13 @@ func _draw() -> void:
 			else:
 				_draw_sand(t)
 	var grid := Color(0, 0, 0, 0.06)
+	if camera.zoom.x >= 1.0 or _is_sub_tool():
+		# Fainter subgrid lines halfway across each tile; stronger while placing small items.
+		var sub_grid := Color(0, 0, 0, 0.1 if _is_sub_tool() else 0.025)
+		for x in range(a.x, b.x):
+			draw_line(Vector2(x + 0.5, a.y) * TILE, Vector2(x + 0.5, b.y) * TILE, sub_grid)
+		for y in range(a.y, b.y):
+			draw_line(Vector2(a.x, y + 0.5) * TILE, Vector2(b.x, y + 0.5) * TILE, sub_grid)
 	for x in range(a.x, b.x + 1):
 		draw_line(Vector2(x, a.y) * TILE, Vector2(x, b.y) * TILE, grid)
 	for y in range(a.y, b.y + 1):
@@ -467,6 +514,11 @@ func _draw() -> void:
 		if not rows.has(t.y):
 			rows[t.y] = []
 		rows[t.y].append(t)
+	for c in sub_objects:
+		var r := _tile_of_sub(c).y
+		if not rows.has(r):
+			rows[r] = []
+		rows[r].append({"sub": c})
 	for s in staff:
 		var r := int(s.pos.y / TILE)
 		if not rows.has(r):
@@ -474,7 +526,9 @@ func _draw() -> void:
 		rows[r].append(s)
 	for y in range(a.y, b.y + 2):
 		for item in rows.get(y, []):
-			if item is Dictionary:
+			if item is Dictionary and item.has("sub"):
+				call("_draw_" + sub_objects[item.sub], Vector2(item.sub) * SUB)
+			elif item is Dictionary:
 				_draw_person(item.pos, item.shirt)
 			elif wall_tiles.get(item) == "wall":
 				_draw_wall(item)
@@ -580,6 +634,14 @@ func _draw_ficus(p: Vector2, _t: Vector2i) -> void:
 	draw_circle(p + Vector2(18, -6), 4, Color(0.32, 0.62, 0.32))
 
 
+func _draw_coffee(p: Vector2) -> void:
+	# p is the top-left of a 16x16 subgrid cell.
+	_ellipse(p + Vector2(8, 14), 7, 2.5, Color(0, 0, 0, 0.2))
+	_box(Rect2(p + Vector2(3, 4), Vector2(10, 10)), 8, Color(0.2, 0.2, 0.22), Color(0.12, 0.12, 0.13))
+	draw_rect(Rect2(p + Vector2(5, 7), Vector2(6, 4)), Color(0.35, 0.22, 0.12))  # the pot
+	draw_rect(Rect2(p + Vector2(10, -3), Vector2(2, 2)), Color(1, 0.25, 0.2) if int(_time * 2) % 2 == 0 else Color(0.4, 0.1, 0.1))
+
+
 func _draw_person(pos: Vector2, shirt: Color) -> void:
 	var feet := pos + Vector2(0, 8)
 	_ellipse(feet, 8, 3, Color(0, 0, 0, 0.25))
@@ -594,11 +656,12 @@ func _draw_preview() -> void:
 	if not _in_bounds(hover):
 		return
 	var tool: Dictionary = TOOLS[tool_index]
-	var tiles: Array = _drag_tiles() if dragging else [hover]
+	var size := SUB if _is_sub_tool() else TILE
+	var tiles: Array = _drag_tiles() if dragging else [_cursor()]
 	for t in tiles:
 		var ok := _can_place(tool.id, t)
 		var c := Color(1, 0.3, 0.3, 0.35) if tool.id == "demolish" or not ok else Color(0.4, 1, 0.5, 0.35)
 		if tool.id == "demolish" and not ok:
 			c = Color(1, 1, 1, 0.15)
-		draw_rect(Rect2(Vector2(t) * TILE, Vector2(TILE, TILE)), c)
-	draw_rect(Rect2(Vector2(hover) * TILE, Vector2(TILE, TILE)), Color(1, 1, 1, 0.8), false, 2.0)
+		draw_rect(Rect2(Vector2(t) * size, Vector2(size, size)), c)
+	draw_rect(Rect2(Vector2(_cursor()) * size, Vector2(size, size)), Color(1, 1, 1, 0.8), false, 2.0)
