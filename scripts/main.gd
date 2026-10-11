@@ -370,6 +370,7 @@ var rush_check: CheckBox
 var power_label: Label
 var build_cat := "structure"  # which build category's tools the build bar shows
 var power_ratio := 1.0  # share of demand covered last step
+var unpowered := {}  # machines left without power last step: Vector3i(x, y, layer), layer 0 floor, 1 roof, 2 wall
 var power_bill := 0  # yesterday's fuel and grid bill
 var _power_cost := 0.0  # today's so far
 var _power_step := 0  # step of the day, 0 = midnight
@@ -1562,13 +1563,14 @@ func _rack_compute() -> float:
 
 
 func _rack_output(t: Vector2i) -> float:
-	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * power_ratio \
+	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * (0.0 if not _powered(t) else 1.0) \
 		* (1.0 + _research_bonus("compute"))
 
 
 # Compute is spent in this order: red-team rigs, then whatever the AI hides at 75%, then training.
 func _redteam_compute() -> float:
-	return minf(objects.values().count("redteam") * REDTEAM_COMPUTE, _compute_per_day())
+	var rigs := objects.keys().filter(func(r): return objects[r] == "redteam" and _powered(r)).size()
+	return minf(rigs * REDTEAM_COMPUTE, _compute_per_day())
 
 
 func _training_compute() -> float:
@@ -1987,11 +1989,28 @@ func _update_staff(delta: float) -> void:
 # --- Power and pollution ----------------------------------------------------
 
 func _power_demand() -> float:
-	var kw := _rack_sum("power") * RACK_KW * (1.0 + _research_bonus("rack_power"))
-	for c in _coolers():
-		kw += COOLERS[c[1]].power
-	kw += objects.values().count("redteam") * REDTEAM_KW
+	var kw := 0.0
+	for m in _machines():
+		kw += m[1]
 	return kw
+
+
+# Everything that draws power, in the order it gets fed: coolers first, then racks and rigs
+# in the order they were built. [Vector3i(x, y, layer), kW]
+func _machines() -> Array:
+	var out := []
+	for c in _coolers():
+		out.append([Vector3i(c[0].x, c[0].y, c[2]), COOLERS[c[1]].power])
+	for t in objects:
+		if RACKS.has(objects[t]):
+			out.append([Vector3i(t.x, t.y, 0), RACKS[objects[t]].power * RACK_KW * (1.0 + _research_bonus("rack_power"))])
+		elif objects[t] == "redteam":
+			out.append([Vector3i(t.x, t.y, 0), REDTEAM_KW])
+	return out
+
+
+func _powered(t: Vector2i, layer := 0) -> bool:
+	return not unpowered.has(Vector3i(t.x, t.y, layer))
 
 
 func _tick_power() -> void:
@@ -2035,12 +2054,20 @@ func _tick_power() -> void:
 		var i: int = c.y * GRID_W + c.x
 		smog[i] = minf(smog[i] + out * h * g.smog, 100.0)
 	power_ratio = 1.0 if demand <= 0.0 else clampf(1.0 - need / demand, 0.0, 1.0)
+	# A machine either gets its full draw or nothing: hand the supply out in order.
+	var left := demand - need + 0.001
+	unpowered.clear()
+	for m in _machines():
+		if m[1] <= left:
+			left -= m[1]
+		else:
+			unpowered[m[0]] = true
 	power_stats = {"demand": demand, "solar": used_solar, "grid": grid, "battery": from_bat, "gens": made}
 	_spread_smog()
-	if power_ratio < 0.99 and not _power_warned:
+	if not unpowered.is_empty() and not _power_warned:
 		_power_warned = true
-		_chet("Bro, we're browning out. Racks and ACs are running at %d%%. Build more generators: Build (B), Power tab." % int(power_ratio * 100.0))
-	elif power_ratio >= 0.99:
+		_chet("Bro, we're browning out. %d machine%s got no power, look for the lightning bolts. Build more generators: Build (B), Power tab." % [unpowered.size(), "" if unpowered.size() == 1 else "s"])
+	elif unpowered.is_empty():
 		_power_warned = false
 	if not _smog_warned and _pollution() > 50:
 		_smog_warned = true
@@ -2100,9 +2127,9 @@ func _coolers() -> Array:
 	var out := []
 	for t in roof_objects:
 		if COOLERS.has(roof_objects[t]):
-			out.append([t, roof_objects[t]])
+			out.append([t, roof_objects[t], 1])
 	for t in window_objects:
-		out.append([t, window_objects[t]])
+		out.append([t, window_objects[t], 2])
 	return out
 
 
@@ -2127,11 +2154,11 @@ func _tick_heat() -> void:
 	added.fill(0.0)
 	for t in objects:
 		if RACKS.has(objects[t]) and room_of.has(t):
-			added[room_of[t]] += RACK_HEAT * RACKS[objects[t]].heat * power_ratio * (1.0 + _research_bonus("rack_heat"))
+			added[room_of[t]] += RACK_HEAT * RACKS[objects[t]].heat * (0.0 if not _powered(t) else 1.0) * (1.0 + _research_bonus("rack_heat"))
 	for c in _coolers():
 		var t: Vector2i = c[0]
-		if COOLERS.has(c[1]) and room_of.has(t):
-			added[room_of[t]] -= COOLERS[c[1]].cooling * power_ratio * (1.0 + _research_bonus("cooling"))
+		if COOLERS.has(c[1]) and room_of.has(t) and _powered(t, c[2]):
+			added[room_of[t]] -= COOLERS[c[1]].cooling * (1.0 + _research_bonus("cooling"))
 	for i in buildings.size():
 		var bld: Dictionary = buildings[i]
 		var v: float = bld.temp + added[i] / maxi(bld.area, 1)
@@ -2377,11 +2404,15 @@ func _describe_hover() -> String:
 					lines[0] += ' "%s"' % rack_names[t]
 				lines.append("Output: %d%%" % int(_rack_output(t) * 100.0))
 			lines.append_array(_effects(id))
+			if not _powered(t):
+				lines.append("No power! Build more generators.")
 		elif sub != "":
 			lines.append(_tool_by_id(sub).get("name", sub.capitalize()))
 		elif window_objects.has(t):
 			lines.append(COOLERS[window_objects[t]].name)
 			lines.append_array(_effects(window_objects[t]))
+			if not _powered(t, 2):
+				lines.append("No power! Build more generators.")
 		elif wall_tiles.has(t):
 			lines.append(_tool_by_id(wall_tiles[t]).name)
 			lines.append_array(_effects(wall_tiles[t]))
@@ -2498,6 +2529,7 @@ func _draw() -> void:
 				call("_draw_" + objects[item], Vector2(item) * TILE, item)
 	if _heat_view():
 		_draw_rack_temps()
+	_draw_unpowered()
 	if deviation >= 25.0 and RACKS.has(objects.get(hover, "")) and rack_names.has(hover) and view_level == 0:
 		var at := Vector2(hover) * TILE + Vector2(-34, -20)  # the name the AI gave this rack
 		draw_string_outline(ThemeDB.fallback_font, at, rack_names[hover], HORIZONTAL_ALIGNMENT_CENTER, TILE + 68, 12, 4, Color.BLACK)
@@ -2593,12 +2625,31 @@ func _draw_desk(p: Vector2, _t: Vector2i) -> void:
 	draw_rect(Rect2(p + Vector2(9, -2), Vector2(14, 8)), Color(0.45, 0.75, 1.0))
 
 
+# A yellow lightning bolt next to every machine that got no power.
+func _draw_unpowered() -> void:
+	var blink := int(Time.get_ticks_msec() / 400) % 2 == 0
+	for k in unpowered:
+		var c := Vector2(k.x * TILE + TILE - 6, k.y * TILE - 18)
+		if k.z == 1:  # roof units sit up on the roof
+			c.y -= WALL_H
+		draw_circle(c, 7, Color(0.1, 0.1, 0.12, 0.85))
+		var bolt := PackedVector2Array([c + Vector2(1, -6), c + Vector2(-4, 1), c + Vector2(0, 1),
+			c + Vector2(-1, 6), c + Vector2(4, -1), c + Vector2(0, -1)])
+		draw_colored_polygon(bolt, Color(1.0, 0.85, 0.1) if blink else Color(1.0, 0.85, 0.1, 0.55))
+
+
 # Better tiers are taller, with a colored stripe and more blinking lights.
 func _draw_rack(p: Vector2, t: Vector2i) -> void:
 	var tier := ["rack", "rack_improved", "rack_advanced"].find(objects.get(t, "rack"))
 	var h := 22 + tier * 6
 	_ellipse(p + Vector2(18, 28), 14, 4, Color(0, 0, 0, 0.25))
-	_box(Rect2(p + Vector2(4, 8), Vector2(24, 22)), h, Color(0.32, 0.33, 0.37), Color(0.08, 0.08, 0.1))
+	var body: Color = [Color(0.32, 0.33, 0.37), Color(0.28, 0.33, 0.42), Color(0.3, 0.26, 0.38)][tier]
+	var base := Rect2(p + Vector2(4, 8), Vector2(24, 22))
+	_box(base, h, body, Color(0.08, 0.08, 0.1))
+	var edge := Color(0.02, 0.02, 0.03)
+	draw_rect(Rect2(base.position - Vector2(0, h), base.size), edge, false, 1.5)
+	draw_rect(Rect2(Vector2(base.position.x, base.end.y - h), Vector2(base.size.x, h)), edge, false, 1.5)
+	draw_line(Vector2(base.position.x, base.end.y - h), Vector2(base.end.x, base.end.y - h), body.lightened(0.35), 1.0)
 	if tier > 0:
 		var stripe := Color(0.3, 0.6, 1.0) if tier == 1 else Color(0.75, 0.4, 1.0)
 		draw_rect(Rect2(p + Vector2(4, 8 - h), Vector2(24, 3)), stripe)
