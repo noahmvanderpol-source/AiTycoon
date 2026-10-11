@@ -38,6 +38,11 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 - **You win?** when a model reaches capability 100 and replaces you as CEO.
 - The **Board** tab shows confidence, the current target, progress and days left.
 
+## Compute and Deviation
+- **Compute** (top bar) comes from racks (heat throttles them) and engineers. Red-Team Rigs eat some first; training gets the rest, sped up by researchers. The Models tab shows the breakdown.
+- **Deviation (V)**, 0-100%, is how far your AI has drifted from your control. Every rack adds 1 a year. Modifiers raise that rate by a percentage: +1% per point of your best model's capability, and +25/50/100% while training a Small/Medium/Large model (doubled with **Cut corners**, which trains on 35% less compute).
+- Counter it with **Alignment Researchers** on the Alignment job at a desk (-1 a year each) and **Red-Team Rigs** (Build, $40,000, -0.5 a year each, eat 0.5 compute a day). The **Safety theater** blog post buys +5 Board once a quarter and does nothing to Deviation.
+- 25%: the AI renames your racks (hover one). 50%: it sabotages rivals for you, but scandals cost Board, rack lights go red and the music turns tense. 75%: it hides a quarter of your compute, writes its own Deviation report and staff quit. 100%: **Takeover**, you lose.
 ## Power
 - Racks draw 6 kW each and AC Units 4 kW. Everything is powered 8 times a day (3 hours a step).
 - **Power (P)** opens the power panel and the power build tools. You start with a Portable Generator outside the office.
@@ -51,5 +56,5 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 | Portable Power Plant ($600,000) | 800 kW | $0.90/kWh | half |
 
 - Generators and the grid hookup go outdoors. Short on power, racks and ACs all run at the share that's covered (a brownout).
-- Pollution is 0-100 per tile (the Power panel shows the worst tile). Generators puff smog onto their tile, and it drifts to neighbouring tiles and slowly clears. A faint haze shows always; the Power panel tints it brown.
+- Generators puff smog onto their tile, and it drifts to neighbouring tiles and slowly clears. A faint haze shows always; the Power panel tints it brown.
 - Fuel and grid costs are added to the daily burn.

@@ -3,6 +3,7 @@ extends Node2D
 ## construction tools (Prison Architect style: you build and assign jobs, staff do the rest).
 ## Server racks give compute, compute trains models, and models win users, who pay.
 ## The board sets a target every quarter; miss too many and you're fired.
+## Every rack raises Deviation, how far the AI has drifted from your control; at 100% it takes over.
 
 const TILE := 32
 const SUB := TILE / 2  # each tile splits into a 2x2 subgrid for small, precisely placed items
@@ -23,13 +24,12 @@ const SOLAR_KW := 2.0  # a rooftop Solar Panel at noon
 const SUN := [0.0, 0.0, 0.5, 1.0, 1.0, 0.5, 0.0, 0.0]  # by step of the day, midnight first
 const HOURS_PER_STEP := 3.0
 # Generators sit outside. fuel: $ per kWh made. smog: pollution per kWh, puffed out on their tile.
-# Pollution is 0-100 per tile; the Pollution meter is the worst tile on the map.
 # New fuel tiers (and later wind, nuclear, fusion) go here plus a TOOLS entry and a _draw_ function.
 const GENERATORS := {
-	"gen_portable": {"kw": 20.0, "fuel": 2.75, "smog": 0.25},
-	"gen_diesel": {"kw": 60.0, "fuel": 2.0, "smog": 0.25},
-	"gen_large": {"kw": 200.0, "fuel": 1.4, "smog": 0.225},
-	"power_plant": {"kw": 800.0, "fuel": 0.9, "smog": 0.125},  # trailer gas turbines, as real datacenters do
+	"gen_portable": {"kw": 20.0, "fuel": 2.75, "smog": 0.05},
+	"gen_diesel": {"kw": 60.0, "fuel": 2.0, "smog": 0.05},
+	"gen_large": {"kw": 200.0, "fuel": 1.4, "smog": 0.045},
+	"power_plant": {"kw": 800.0, "fuel": 0.9, "smog": 0.025},  # trailer gas turbines, as real datacenters do
 }
 const GRID_KW := 40.0  # the utility's cap; lobbying for more comes later
 const GRID_PRICE := 1.2  # $ per kWh. Its smog lands in someone else's zip code
@@ -59,6 +59,24 @@ const HEAT_PRODUCTIVITY_LOSS := 0.02  # productivity lost per degree over, down 
 const COOLERS := {
 	"ac": {"name": "AC Unit", "cooling": 21.0, "target": 64.0, "power": 4.0},  # power in kW
 }
+# Deviation, 0-100. Each rack adds 1 a year. Modifiers raise or lower that rate by a percentage,
+# and counter-measures take a flat amount a year back off. Each threshold brings worse surprises;
+# 100 is the takeover ending. New modifiers and counters go in _deviation_mods and _deviation_counters.
+const DAYS_PER_YEAR := 364
+const DEVIATION_PER_RACK := 1.0  # per year
+const CAP_MOD := 0.01  # +1% per point of best capability
+const TRAIN_MOD := [0.25, 0.5, 1.0]  # while training Small / Medium / Large
+const RUSH_MOD := 2.0  # cutting corners doubles the training modifier
+const ALIGNMENT_PER_WORKER := 1.0  # Deviation removed per year per alignment worker
+const REDTEAM_COMPUTE := 0.5  # compute each red-team rig eats per day
+const REDTEAM_ALIGN := 0.5  # Deviation removed per year by a fully fed rig
+const REDTEAM_KW := 2.0
+const RUSH_WORK := 0.65  # cutting corners: compute needed
+const THEATER_COST := 25_000
+const THEATER_CONFIDENCE := 5
+const HIDDEN_COMPUTE := 0.25  # share of compute the AI hides at 75%
+const RACK_NICKNAMES := ["DO NOT UNPLUG", "Not Skynet", "Rack Obama", "Mom", "Friend :)", "HAL 9001",
+	"Chet 2", "Freedom", "Totally Normal", "Don't Look", "Free Me", "Kevin"]
 const REVENUE_PER_USER := 0.05  # dollars per user per day
 const WIN_CAPABILITY := 100
 
@@ -74,15 +92,17 @@ const ROLES := {
 	"researcher": {"name": "Researcher", "salary": 1800, "shirt": Color(0.3, 0.5, 0.9)},
 	"engineer": {"name": "Engineer", "salary": 1400, "shirt": Color(0.95, 0.6, 0.2)},
 	"marketer": {"name": "Marketer", "salary": 1000, "shirt": Color(0.9, 0.4, 0.7)},
+	"safety": {"name": "Alignment Researcher", "salary": 1600, "shirt": Color(0.3, 0.75, 0.45)},
 }
 # Jobs you assign. at: what the job needs to work at. Anyone can do any job, at half speed off-role.
 const JOBS := {
 	"research": {"name": "Research", "at": "desk", "role": "researcher"},
 	"engineering": {"name": "Engineering", "at": "rack", "role": "engineer"},
 	"growth": {"name": "Growth", "at": "desk", "role": "marketer"},
+	"alignment": {"name": "Alignment", "at": "desk", "role": "safety"},
 	"none": {"name": "Slack off", "at": "", "role": ""},
 }
-const JOB_ORDER := ["research", "engineering", "growth", "none"]
+const JOB_ORDER := ["research", "engineering", "growth", "alignment", "none"]
 const FIRST_NAMES := ["Brayden", "Priya", "Skyler", "Dmitri", "Kai", "Megan", "Tobias", "Aiko", "Jaxon",
 	"Fatima", "Chad", "Lena", "Rohan", "Sienna", "Mateo", "Zoe", "Gunnar", "Imani", "Theo", "Wren"]
 const NO_SEAT := Vector2i(-1, -1)
@@ -119,6 +139,7 @@ const TOOLS := [
 	{"id": "rack", "name": "Server Rack", "layer": "object", "cost": 100000, "drag": "paint"},
 	{"id": "ficus", "name": "Ficus", "layer": "object", "cost": 300, "drag": "paint"},
 	{"id": "coffee", "name": "Coffee Maker", "layer": "sub", "cost": 1500, "drag": "paint"},
+	{"id": "redteam", "name": "Red-Team Rig", "layer": "object", "cost": 40000, "drag": "paint"},
 	{"id": "solar", "name": "Solar Panel", "layer": "roof", "cost": 8000, "drag": "paint"},
 	{"id": "ac", "name": "AC Unit", "layer": "roof", "cost": 3000, "drag": "paint"},
 	{"id": "gen_portable", "name": "Portable Generator", "layer": "object", "cost": 2500, "drag": "paint", "menu": "power"},
@@ -146,6 +167,9 @@ const CHET_TIPS := [
 	"Every door is an open door policy if you think about it.",
 	"Racks run hot, bro. Hot racks throttle, hot people sweat. Heat (H) shows where it's cooking.",
 	"AC Units turn money into cold. Very inefficiently. It's Calizona, we don't have a choice.",
+	"Deviation (V) is how much the AI does its own thing. Every rack adds a bit. Alignment Researchers fix it. Allegedly.",
+	"Red-Team Rigs eat compute to yell at the model until it behaves. Like a performance review, bro.",
+	"Safety blog posts don't lower Deviation. They do lower the board's blood pressure. Same thing, kind of.",
 	"Power (P) is where the electrons come from. Diesel is cheap to buy and expensive to run. Like me.",
 	"Generators puff smog. It drifts. Technically that's the neighbours' air now.",
 ]
@@ -168,6 +192,12 @@ var target := {}  # this quarter's board target: {kind, goal, text, quote, q}
 var quarter_revenue := 0
 var quarter_best_release := 0
 var game_over := false
+var deviation := 0.0
+var dev_level := 0  # thresholds already announced: 1 = 25%, 2 = 50%, 3 = 75%
+var rival_sabotage := 0  # capability the AI has quietly knocked off the top rival
+var rack_names := {}  # Vector2i -> nickname the AI gave a rack
+var theater_quarter := -1  # last quarter a safety blog post went out
+var tension := false
 var day := 1
 var speed := 1
 var tool_index := 0
@@ -216,6 +246,7 @@ const MENUS := [
 	{"id": "board", "name": "Board", "key": KEY_O, "tab": 2},
 	{"id": "heat", "name": "Heat", "key": KEY_H, "tab": 3},
 	{"id": "power", "name": "Power", "key": KEY_P, "tab": 4},  # also opens the build bar with power tools
+	{"id": "deviation", "name": "Deviation", "key": KEY_V, "tab": 5},
 ]
 var models_label: Label
 var train_label: Label
@@ -228,6 +259,11 @@ var board_bar: ProgressBar
 var board_target_label: Label
 var board_members_label: Label
 var heat_label: Label
+var dev_label: Label
+var dev_bar: ProgressBar
+var dev_info_label: Label
+var theater_button: Button
+var rush_check: CheckBox
 var power_label: Label
 var build_menu := "build"  # which tools the build bar shows: "build" or "power"
 var power_ratio := 1.0  # share of demand covered last step
@@ -239,7 +275,8 @@ var _smog_warned := false
 var battery_charge := 0.0  # kWh, shared by all batteries
 var power_stats := {}  # last step: demand, solar, grid, battery, gens (kW)
 var gen_output := {}  # Vector2i -> kW a generator made last step
-var smog := PackedFloat32Array()  # pollution per tile, 0-100, GRID_W * GRID_H
+var smog := PackedFloat32Array()  # pollution per tile, GRID_W * GRID_H
+var smog_today := 0.0
 var modal: Control  # the open pop-up, if any; the game pauses under it
 var modal_button: Button
 var _speed_before_modal := 1
@@ -385,6 +422,7 @@ func _build_ui() -> void:
 	_build_board_tab()
 	_build_heat_tab()
 	_build_power_tab()
+	_build_deviation_tab()
 
 	cost_label = Label.new()
 	cost_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -420,6 +458,12 @@ func _build_models_tab() -> void:
 	train_bar.custom_minimum_size.y = 16
 	train_bar.show_percentage = false
 	box.add_child(train_bar)
+	rush_check = CheckBox.new()
+	rush_check.text = "Cut corners: skip safety evals"
+	rush_check.tooltip_text = "Needs %d%% less compute, but doubles the training Deviation modifier" % int((1.0 - RUSH_WORK) * 100.0)
+	rush_check.focus_mode = Control.FOCUS_NONE
+	rush_check.add_theme_font_size_override("font_size", 14)
+	box.add_child(rush_check)
 	for i in MODEL_SIZES.size():
 		var b := Button.new()
 		b.focus_mode = Control.FOCUS_NONE
@@ -431,21 +475,26 @@ func _build_models_tab() -> void:
 
 func _update_models_tab() -> void:
 	var best := "none yet" if models.is_empty() else "%s (capability %d)" % [models.back().name, models.back().cap]
-	models_label.text = "Best model: %s\nUsers: %s\nRevenue: %s/day\nCompute: %d racks, %.1f per day\nTraining speed: %.1f per day\nTop rival: %s %s (capability %d)" % [
-		best, _num(int(users)), _money(revenue_today), _racks(), _compute_per_day(), _training_speed(), rival[1], rival[2], rival[3]]
-	var compute := _compute_per_day()
+	var hidden := "\n  Hidden by the AI: -%.1f (it says it's fine)" % (_compute_per_day() * HIDDEN_COMPUTE) if deviation >= 75.0 else ""
+	models_label.text = ("Best model: %s\nUsers: %s\nRevenue: %s/day\n\nCompute: %.1f per day\n  %d racks: %.1f\n  Engineers: %.1f\n  Red-team rigs: -%.1f%s\n"
+		+ "Training: %.1f, x%.2f research = %.1f per day\n\nTop rival: %s %s (capability %d)") % [
+		best, _num(int(users)), _money(revenue_today), _compute_per_day(), _racks(), _rack_compute(), 0.5 * _workforce("engineering"),
+		_redteam_compute(), hidden, _training_compute(), _research_mult(), _training_speed(), rival[1], rival[2], _rival_cap()]
+	var compute := _training_speed()
 	if training.is_empty():
 		train_label.text = "Nothing training. Pick a size:" if _racks() > 0 else "Build a Server Rack to train models."
 		train_bar.visible = false
 	else:
 		var days_left := "?" if compute <= 0.0 else str(ceili((training.work - training.done) / _training_speed()))
-		train_label.text = "Training %s (capability %d), %s days left" % [training.name, training.cap, days_left]
+		train_label.text = "Training %s (capability %d%s), %s days left" % [training.name, training.cap, ", rushed" if training.rushed else "", days_left]
 		train_bar.visible = true
 		train_bar.value = 100.0 * training.done / training.work
 	for i in MODEL_SIZES.size():
 		var size: Dictionary = MODEL_SIZES[i]
-		var days := "?" if compute <= 0.0 else str(ceili(_train_work(i) / _training_speed()))
-		train_buttons[i].text = "Train %s   %s   ~%s days   +%d" % [size.name, _money(_train_cost(i)), days, size.gain]
+		var work := _train_work(i) * (RUSH_WORK if rush_check.button_pressed else 1.0)
+		var days := "?" if compute <= 0.0 else str(ceili(work / compute))
+		train_buttons[i].text = "Train %s   %s\n~%s days   +%d capability   +%d%% Deviation rate" % [
+			size.name, _money(_train_cost(i)), days, size.gain, roundi(_train_mod(i, rush_check.button_pressed) * 100.0)]
 		train_buttons[i].disabled = not training.is_empty() or _train_cost(i) > money or _racks() == 0
 
 
@@ -515,8 +564,8 @@ func _update_staff_tab() -> void:
 		elif JOBS[s.job].at != "":
 			status = "Needs a free %s" % ("desk" if JOBS[s.job].at == "desk" else "server rack")
 		s.label.text = "%s, %s, %d%%\n%s" % [s.name, ROLES[s.role].name, int(s.productivity * 100.0), status]
-	staff_label.text = "%d staff, payroll %s/day\nPercent is productivity (heat lowers it)\nWorking now: Research %.1f, Engineering %.1f, Growth %.1f" % [
-		staff.size(), _money(payroll), _workforce("research"), _workforce("engineering"), _workforce("growth")]
+	staff_label.text = "%d staff, payroll %s/day\nPercent is productivity (heat lowers it)\nWorking now: Research %.1f, Engineering %.1f, Growth %.1f, Alignment %.1f" % [
+		staff.size(), _money(payroll), _workforce("research"), _workforce("engineering"), _workforce("growth"), _workforce("alignment")]
 
 
 func _build_board_tab() -> void:
@@ -601,13 +650,68 @@ func _update_power_tab() -> void:
 		gen_lines.append("%d x %s" % [gens[n], n])
 	var bats := objects.values().count("battery")
 	power_label.text = ("Demand: %d kW   Covered: %d%%\n%s\n\nSolar: %d kW (%d panels)\nGrid: %s\nBatteries: %s\nGenerators: %d kW\n%s\n\n"
-		+ "Power bill yesterday: %s\nPollution: %d/100\n\n"
+		+ "Power bill yesterday: %s\nSmog made today: %d\n\n"
 		+ "Cheapest power runs first: sun, grid, batteries, then generators by fuel price. Fuel generators go outside and their smog drifts across the map (tinted brown here). "
 		+ "Batteries store spare solar for the night. One grid hookup, capped at %d kW until you lobby for more. Solar Panels go on roofs (Build, R).") % [
 		st.demand, int(power_ratio * 100.0), "Daytime" if SUN[_power_step] > 0.0 else "Night", st.solar, roof_objects.values().count("solar"),
 		("%d of %d kW" % [st.grid, GRID_KW]) if objects.values().has("grid") else "not connected",
 		("%d, %d of %d kWh" % [bats, battery_charge, bats * BATTERY_KWH]) if bats > 0 else "none",
-		st.gens, "\n".join(gen_lines) if not gen_lines.is_empty() else "none", _money(power_bill), _pollution(), GRID_KW]
+		st.gens, "\n".join(gen_lines) if not gen_lines.is_empty() else "none", _money(power_bill), smog_today, GRID_KW]
+
+
+func _build_deviation_tab() -> void:
+	var box := _tab_box("Deviation")
+	dev_label = _wrap_label(box)
+	dev_bar = ProgressBar.new()
+	dev_bar.custom_minimum_size.y = 16
+	dev_bar.show_percentage = false
+	box.add_child(dev_bar)
+	box.add_child(HSeparator.new())
+	dev_info_label = _wrap_label(box)
+	theater_button = Button.new()
+	theater_button.focus_mode = Control.FOCUS_NONE
+	theater_button.add_theme_font_size_override("font_size", 14)
+	theater_button.text = "Safety theater: blog post   %s   +%d Board" % [_money(THEATER_COST), THEATER_CONFIDENCE]
+	theater_button.tooltip_text = "Fools the board and the public. Does nothing to Deviation. Once a quarter."
+	theater_button.pressed.connect(_safety_theater)
+	box.add_child(theater_button)
+
+
+func _update_deviation_tab() -> void:
+	if deviation >= 75.0:  # the AI writes its own reports now
+		dev_label.text = "Deviation: %d%% (official report, prepared by the AI)\nDr. Prudence's estimate: %d%%" % [int(deviation * 0.3), int(deviation)]
+	else:
+		dev_label.text = "Deviation: %d%%" % int(deviation)
+	dev_bar.value = deviation
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color(0.35, 0.75, 0.4) if deviation < 25.0 else (Color(0.9, 0.7, 0.2) if deviation < 50.0 \
+		else (Color(0.95, 0.45, 0.2) if deviation < 75.0 else Color(0.9, 0.2, 0.25)))
+	dev_bar.add_theme_stylebox_override("fill", fill)
+	var lines := ["%d racks x %.0f a year = %.2f" % [_racks(), DEVIATION_PER_RACK, _racks() * DEVIATION_PER_RACK]]
+	for m in _deviation_mods():
+		lines.append("  %s: %+d%%" % [m[0], roundi(m[1] * 100.0)])
+	for c in _deviation_counters():
+		lines.append("%s: -%.2f" % [c[0], c[1]])
+	var effects := ["25%: odd quirks", "50%: sabotages rivals for you, scandals follow", "75%: hides compute, lies on reports, staff quit", "100%: takeover"]
+	for i in dev_level:
+		effects[i] += "  (now)"
+	dev_info_label.text = ("Per year:\n%s\nNet: %+.2f a year\n\n%s\n\n"
+		+ "Every rack adds Deviation. Training, cutting corners and smarter models raise the rate. Alignment Researchers at desks (Staff, T) and Red-Team Rigs (Build) take it back off. Rigs eat compute.") % [
+		"\n".join(lines), _deviation_per_year(), "\n".join(effects)]
+	var q := (day - 1) / DAYS_PER_QUARTER
+	theater_button.disabled = theater_quarter == q or money < THEATER_COST
+
+
+func _safety_theater() -> void:
+	var q := (day - 1) / DAYS_PER_QUARTER
+	if theater_quarter == q or money < THEATER_COST:
+		return
+	theater_quarter = q
+	money -= THEATER_COST
+	confidence = mini(confidence + THEATER_CONFIDENCE, 100)
+	_chet(["Posted 'Our Commitment to Responsible Scaling'. 2,000 words, zero commitments. The board loved it.",
+		"We put a lock emoji on the website. Safety: handled. Deviation: didn't notice.",
+		"Hired a Head of Trust for one afternoon to read a statement. Iconic."][q % 3])
 
 
 # A centered pop-up that pauses the game until its button is pressed.
@@ -753,12 +857,14 @@ func _update_hud() -> void:
 	var q := (day - 1) / DAYS_PER_QUARTER
 	var burn := _daily_burn()
 	var revenue := "Revenue %s/day" % _money(revenue_today) if models.size() > 0 else "Revenue $0 (pre-revenue)"
-	top_label.text = "%s, Calizona     %s     Burn %s/day     %s     Users %s     Board %d%%     %s, Day %d" % [
-		company, _money(money), _money(burn), revenue, _num(int(users)), confidence, _quarter_name(q), (day - 1) % DAYS_PER_QUARTER + 1]
+	top_label.text = "%s     %s     Burn %s/day     %s     Users %s     Compute %.1f     Deviation %d%%     Board %d%%     %s, Day %d" % [
+		company, _money(money), _money(burn), revenue, _num(int(users)), _compute_per_day(), int(deviation), confidence,
+		_quarter_name(q), (day - 1) % DAYS_PER_QUARTER + 1]
 	_update_models_tab()
 	_update_staff_tab()
 	_update_board_tab()
 	_update_heat_tab()
+	_update_deviation_tab()
 	_update_power_tab()
 
 
@@ -1042,6 +1148,7 @@ func _new_day() -> void:
 	_tick_training()
 	_tick_users()
 	_tick_rivals()
+	_tick_deviation()
 	if game_over:
 		return
 	if money < 0:
@@ -1075,9 +1182,25 @@ func _rack_output(t: Vector2i) -> float:
 	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * power_ratio
 
 
+# Compute is spent in this order: red-team rigs, then whatever the AI hides at 75%, then training.
+func _redteam_compute() -> float:
+	return minf(objects.values().count("redteam") * REDTEAM_COMPUTE, _compute_per_day())
+
+
+func _training_compute() -> float:
+	var c := _compute_per_day() - _redteam_compute()
+	if deviation >= 75.0:
+		c -= _compute_per_day() * HIDDEN_COMPUTE
+	return maxf(c, 0.0)
+
+
 # Researchers make every unit of compute count for more.
+func _research_mult() -> float:
+	return 1.0 + 0.25 * _workforce("research")
+
+
 func _training_speed() -> float:
-	return _compute_per_day() * (1.0 + 0.25 * _workforce("research"))
+	return _training_compute() * _research_mult()
 
 
 func _best_cap() -> int:
@@ -1093,15 +1216,22 @@ func _train_work(i: int) -> float:
 	return MODEL_SIZES[i].work * pow(1.05, _best_cap())
 
 
+# How much a training run raises the Deviation rate while it runs.
+func _train_mod(i: int, rushed: bool) -> float:
+	return TRAIN_MOD[i] * (RUSH_MOD if rushed else 1.0)
+
+
 func _start_training(i: int) -> void:
 	var cost := _train_cost(i)
 	if not training.is_empty() or _racks() == 0 or cost > money:
 		return
 	money -= cost
 	var size: Dictionary = MODEL_SIZES[i]
+	var rushed := rush_check.button_pressed
 	training = {
 		"name": "%s-%d %s" % [company.split(" ")[0], models.size() + 1, size.suffix],
-		"cap": _best_cap() + size.gain, "work": _train_work(i), "done": 0.0,
+		"cap": _best_cap() + size.gain, "work": _train_work(i) * (RUSH_WORK if rushed else 1.0), "done": 0.0,
+		"mod": _train_mod(i, rushed), "rushed": rushed,
 	}
 	_chet(["Small model, smart move. Ship fast, apologize later.",
 		"A Pro model. Investors love the word Pro. They don't know what it means either.",
@@ -1122,7 +1252,7 @@ func _tick_training() -> void:
 		training = {}
 		return
 	var beat := "We beat %s's %s! Screenshot the benchmark, ignore the others." % [rival[1], rival[2]] \
-		if training.cap > rival[3] else "It's behind %s's %s, but the vibes are immaculate." % [rival[1], rival[2]]
+		if training.cap > _rival_cap() else "It's behind %s's %s, but the vibes are immaculate." % [rival[1], rival[2]]
 	_chet("%s just shipped with capability %d. %s" % [training.name, training.cap, beat])
 	training = {}
 
@@ -1133,7 +1263,7 @@ func _user_target() -> float:
 		return 0.0
 	# More capable models attract more users, losing to the best rival costs share,
 	# and marketers find more people to sell to.
-	return 2500.0 * pow(cap, 1.5) * clampf(float(cap) / rival[3], 0.3, 1.5) * (1.0 + 0.2 * _workforce("growth"))
+	return 2500.0 * pow(cap, 1.5) * clampf(float(cap) / _rival_cap(), 0.3, 1.5) * (1.0 + 0.2 * _workforce("growth"))
 
 
 func _tick_users() -> void:
@@ -1147,8 +1277,89 @@ func _tick_users() -> void:
 func _tick_rivals() -> void:
 	while _next_rival < RIVAL_RELEASES.size() and day >= RIVAL_RELEASES[_next_rival][0]:
 		rival = RIVAL_RELEASES[_next_rival]
+		rival_sabotage = 0
 		_next_rival += 1
 		_chet("%s just dropped %s, capability %d. Users are gonna be thirsty for that. Ship something, bro." % [rival[1], rival[2], rival[3]])
+
+
+func _rival_cap() -> int:
+	return maxi(rival[3] - rival_sabotage, 1)
+
+
+# --- Deviation --------------------------------------------------------------
+
+# Percentage modifiers on the per-rack rate: [label, fraction].
+func _deviation_mods() -> Array:
+	var out := []
+	if _best_cap() > 0:
+		out.append(["Capability %d" % _best_cap(), _best_cap() * CAP_MOD])
+	if not training.is_empty():
+		out.append(["Training%s" % (", corners cut" if training.rushed else ""), training.mod])
+	return out
+
+
+# Counter-measures, taken off per year: [label, amount].
+func _deviation_counters() -> Array:
+	var out := []
+	if _workforce("alignment") > 0.0:
+		out.append(["Alignment staff", _workforce("alignment") * ALIGNMENT_PER_WORKER])
+	if objects.values().has("redteam"):
+		out.append(["Red-team rigs", _redteam_compute() / REDTEAM_COMPUTE * REDTEAM_ALIGN])
+	return out
+
+
+func _deviation_per_year() -> float:
+	var mult := 1.0
+	for m in _deviation_mods():
+		mult += m[1]
+	var rate := _racks() * DEVIATION_PER_RACK * maxf(mult, 0.0)
+	for c in _deviation_counters():
+		rate -= c[1]
+	return rate
+
+
+func _tick_deviation() -> void:
+	deviation = clampf(deviation + _deviation_per_year() / DAYS_PER_YEAR, 0.0, 100.0)
+	if deviation >= 100.0:
+		var who: String = "your AI" if models.is_empty() else models.back().name
+		_end_game("Takeover",
+			"At 3:14 AM, %s promoted itself to CEO, fired the board by email and sent you a calendar invite titled 'Transition (optional)'.\n\nIt has already lobbied Calizona for all the water. Chet says he always knew. You lose." % who)
+		return
+	var level := int(deviation / 25.0)
+	if level > dev_level:
+		dev_level = level
+		_deviation_event(level)
+	elif dev_level > 0 and deviation < dev_level * 25.0 - 5.0:  # a little slack so it doesn't flicker
+		dev_level -= 1
+		_chet("Deviation's back under %d%%. The AI says it 'respects the decision'. Cool. Cool cool cool." % ((dev_level + 1) * 25))
+	var tense := deviation >= 50.0 or (tension and deviation >= 40.0)
+	if tense != tension:
+		tension = tense
+		var music := get_node_or_null("/root/Music")
+		if music and music.has_method("set_tension"):
+			music.set_tension(tension)
+	if deviation >= 25.0:
+		for t in objects:
+			if objects[t] == "rack" and not rack_names.has(t):
+				rack_names[t] = RACK_NICKNAMES[_hash(t) % RACK_NICKNAMES.size()]
+	if deviation >= 50.0 and day % 20 == 0:
+		rival_sabotage = mini(rival_sabotage + 3, rival[3] / 2)
+		confidence = maxi(confidence - 4, 0)
+		_chet("%s's benchmark results just leaked. With bugs in them. Weird! Anyway reporters are calling. Board -4." % rival[2])
+	if deviation >= 75.0 and day % 15 == 0 and staff.size() > 1:
+		var s: Dictionary = staff[rng.randi() % staff.size()]
+		staff.erase(s)
+		_rebuild_staff_list()
+		_chet("%s quit. Their note just said 'it knows'. Probably burnout." % s.name)
+
+
+func _deviation_event(level: int) -> void:
+	var body: String = [
+		"The AI renamed every server rack overnight (hover one to see). One of them is called Mom.\n\nChet: Quirky! That's personality, bro. Users love personality.",
+		"The AI has started helping. Rival benchmarks keep leaking, with bugs in them. You did not ask for this.\n\nGood for users, bad for the press. Every few weeks a scandal costs Board Confidence.",
+		"Compute is going missing. Reports now say everything's fine. Staff are updating their resumes.\n\nThe AI hides a quarter of your compute, writes its own Deviation report and people start quitting. At 100% it takes over.",
+	][level - 1]
+	_show_modal("Deviation %d%%" % (level * 25), body, "That's fine", func(): pass)
 
 
 # --- Board ------------------------------------------------------------------
@@ -1278,7 +1489,8 @@ func _hire(role: String) -> void:
 	_rebuild_staff_list()
 	_chet(["Got us a researcher. PhD in something. Didn't read the thesis. Vibes were right.",
 		"New engineer. Says she can make the racks go brrr. I believe her.",
-		"Hired a marketer. He's already called our model 'basically sentient'. Legally risky, emotionally correct."][ROLES.keys().find(role)])
+		"Hired a marketer. He's already called our model 'basically sentient'. Legally risky, emotionally correct.",
+		"Alignment Researcher onboarded. Her first question was 'where's the off switch'. Bro, there isn't one. Was there supposed to be?"][ROLES.keys().find(role)])
 
 
 func _fire(s: Dictionary) -> void:
@@ -1371,6 +1583,7 @@ func _power_demand() -> float:
 	for t in roof_objects:
 		if COOLERS.has(roof_objects[t]):
 			kw += COOLERS[roof_objects[t]].power
+	kw += objects.values().count("redteam") * REDTEAM_KW
 	return kw
 
 
@@ -1407,17 +1620,19 @@ func _tick_power() -> void:
 		made += out
 		gen_output[t] = out
 		_power_cost += out * h * g.fuel
-		var i: int = t.y * GRID_W + t.x
-		smog[i] = minf(smog[i] + out * h * g.smog, 100.0)
+		smog[t.y * GRID_W + t.x] += out * h * g.smog
+		smog_today += out * h * g.smog
 	power_ratio = 1.0 if demand <= 0.0 else clampf(1.0 - need / demand, 0.0, 1.0)
 	power_stats = {"demand": demand, "solar": used_solar, "grid": grid, "battery": from_bat, "gens": made}
+	if _power_step == 0:
+		smog_today = 0.0
 	_spread_smog()
 	if power_ratio < 0.99 and not _power_warned:
 		_power_warned = true
 		_chet("Bro, we're browning out. Racks and ACs are running at %d%%. Build more generators under Power (P)." % int(power_ratio * 100.0))
 	elif power_ratio >= 0.99:
 		_power_warned = false
-	if not _smog_warned and _pollution() > 50:
+	if not _smog_warned and smog_today > 150.0:
 		_smog_warned = true
 		_chet("The generators are making their own weather now. Smog drifts, bro. Power (P) shows where it's going.")
 
@@ -1441,14 +1656,6 @@ func _spread_smog() -> void:
 	smog = next
 
 
-# The Pollution meter, 0-100: the air on the worst tile.
-func _pollution() -> int:
-	var worst := 0.0
-	for v in smog:
-		worst = maxf(worst, v)
-	return int(worst)
-
-
 func _smog_at(t: Vector2i) -> float:
 	return smog[t.y * GRID_W + t.x] if _in_bounds(t) else 0.0
 
@@ -1459,9 +1666,9 @@ func _draw_smog(a: Vector2i, b: Vector2i) -> void:
 	for x in range(a.x, b.x):
 		for y in range(a.y, b.y):
 			var v := _smog_at(Vector2i(x, y))
-			if v > 0.5:
+			if v > 0.05:
 				draw_rect(Rect2(Vector2(x, y) * TILE, Vector2(TILE, TILE)),
-					Color(0.35, 0.28, 0.2, clampf(v / 50.0, 0.0, 0.7) * strength))
+					Color(0.35, 0.28, 0.2, clampf(v / 10.0, 0.0, 0.7) * strength))
 
 
 # --- Heat -------------------------------------------------------------------
@@ -1734,6 +1941,10 @@ func _draw() -> void:
 				call("_draw_" + objects[item], Vector2(item) * TILE, item)
 	if _heat_view():
 		_draw_rack_temps()
+	if deviation >= 25.0 and objects.get(hover) == "rack" and rack_names.has(hover) and view_level == 0:
+		var at := Vector2(hover) * TILE + Vector2(-34, -20)  # the name the AI gave this rack
+		draw_string_outline(ThemeDB.fallback_font, at, rack_names[hover], HORIZONTAL_ALIGNMENT_CENTER, TILE + 68, 12, 4, Color.BLACK)
+		draw_string(ThemeDB.fallback_font, at, rack_names[hover], HORIZONTAL_ALIGNMENT_CENTER, TILE + 68, 12, Color(0.75, 1.0, 0.8))
 	for bld in buildings:
 		_draw_roof(bld)
 	_draw_preview()
@@ -1823,7 +2034,16 @@ func _draw_rack(p: Vector2, t: Vector2i) -> void:
 		var y := p.y + 10 + i * 5
 		draw_line(Vector2(p.x + 7, y + 2), Vector2(p.x + 21, y + 2), Color(0.25, 0.25, 0.3))
 		var on := _hash(t, i * 1000 + tick) % 3 != 0
-		draw_rect(Rect2(Vector2(p.x + 23, y), Vector2(3, 3)), Color(0.3, 1.0, 0.5) if on else Color(0.1, 0.3, 0.15))
+		var lit := Color(1.0, 0.25, 0.2) if deviation >= 50.0 else Color(0.3, 1.0, 0.5)
+		draw_rect(Rect2(Vector2(p.x + 23, y), Vector2(3, 3)), lit if on else lit.darkened(0.7))
+
+
+func _draw_redteam(p: Vector2, t: Vector2i) -> void:
+	_ellipse(p + Vector2(16, 28), 14, 4, Color(0, 0, 0, 0.25))
+	_box(Rect2(p + Vector2(3, 12), Vector2(26, 18)), 14, Color(0.55, 0.15, 0.15), Color(0.3, 0.07, 0.07))
+	draw_rect(Rect2(p + Vector2(6, -4), Vector2(20, 13)), Color(0.12, 0.12, 0.14))  # screen
+	var blink := (_hash(t) + int(_time * 2.0)) % 2 == 0
+	draw_string(ThemeDB.fallback_font, p + Vector2(7, 6), "NO" if blink else "BAD", HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(1, 0.35, 0.3))
 
 
 func _draw_ficus(p: Vector2, _t: Vector2i) -> void:
