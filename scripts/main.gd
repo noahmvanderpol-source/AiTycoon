@@ -119,12 +119,17 @@ const ROLES := {
 # Jobs you assign. at: what the job needs to work at. Anyone can do any job, at half speed off-role.
 const JOBS := {
 	"research": {"name": "Research", "at": "desk", "role": "researcher"},
-	"engineering": {"name": "Engineering", "at": "rack", "role": "engineer"},
+	"engineering": {"name": "Engineering", "at": "eng_station", "role": "engineer"},
 	"growth": {"name": "Growth", "at": "desk", "role": "marketer"},
 	"alignment": {"name": "Alignment", "at": "desk", "role": "safety"},
 	"none": {"name": "Slack off", "at": "", "role": ""},
 }
 const JOB_ORDER := ["research", "engineering", "growth", "alignment", "none"]
+# Engineer's Workstation: engineers work anywhere within ENG_RADIUS tiles of it, and each one
+# tends a server rack inside that radius for +ENG_RACK_BONUS compute.
+const ENG_SLOTS := 5
+const ENG_RADIUS := 4.0
+const ENG_RACK_BONUS := 0.5
 const FIRST_NAMES := ["Brayden", "Priya", "Skyler", "Dmitri", "Kai", "Megan", "Tobias", "Aiko", "Jaxon",
 	"Fatima", "Chad", "Lena", "Rohan", "Sienna", "Mateo", "Zoe", "Gunnar", "Imani", "Theo", "Wren"]
 const NO_SEAT := Vector2i(-1, -1)
@@ -174,6 +179,7 @@ const TOOLS := [
 	{"id": "door", "name": "Door", "layer": "wall", "cost": 2500, "drag": "single", "cat": "structure"},
 	{"id": "desk", "name": "Desk", "layer": "object", "cost": 6000, "drag": "paint", "cat": "furniture"},
 	{"id": "rack", "name": "Server Rack", "layer": "object", "cost": 100000, "drag": "paint", "cat": "compute"},
+	{"id": "eng_station", "name": "Engineer's Workstation", "layer": "object", "cost": 15000, "drag": "single", "cat": "furniture"},
 	{"id": "ficus", "name": "Ficus", "layer": "object", "cost": 300, "drag": "paint", "cat": "furniture"},
 	{"id": "coffee", "name": "Coffee Maker", "layer": "sub", "cost": 1500, "drag": "paint", "cat": "furniture"},
 	{"id": "redteam", "name": "Red-Team Rig", "layer": "object", "cost": 40000, "drag": "paint", "cat": "safety"},
@@ -200,7 +206,7 @@ const CHET_TIPS := [
 	"Ficus plants boost morale by 0%. Investors love them though.",
 	"Revenue? We're pre-revenue. That's a vibe, not a problem.",
 	"More Server Racks means more compute means faster training. It's literally just math, bro.",
-	"Researchers at desks train models faster. Engineers babysit racks for extra compute. Marketers at desks get users.",
+	"Researchers at desks train models faster. Engineers at a Workstation babysit nearby racks for extra compute. Marketers at desks get users.",
 	"Assign jobs under Staff (T). You don't tell people what to do, you tell them what their job is. Leadership.",
 	"The board sets one target a quarter. Hit it and they love you. Miss it and, well, I hear Uber's hiring.",
 	"Users are revenue. Revenue is users. I learned that at Stanford. Well, near Stanford.",
@@ -424,6 +430,7 @@ func _build_starter_office() -> void:
 	objects[Vector2i(28, 19)] = "desk"
 	objects[Vector2i(34, 19)] = "rack"
 	objects[Vector2i(34, 20)] = "rack"
+	objects[Vector2i(32, 22)] = "eng_station"
 	objects[Vector2i(25, 25)] = "ficus"
 	roof_objects[Vector2i(30, 21)] = "ac"
 	objects[Vector2i(37, 24)] = "gen_portable"  # round the side, humming
@@ -559,8 +566,8 @@ const GUIDE := [
 	["Getting started", "You run an AI startup in Calizona. Train models to get users, users bring revenue, and keep the board happy until your AI is smart enough to replace you as CEO. You win? If the board loses all confidence you're fired. If Deviation hits 100% the AI takes over."],
 	["Building (B)", "Open Build and pick a category tab (Tab cycles them). Left drag to build: floors fill a box, walls draw a box outline, furniture paints, doors place one at a time. Right click demolishes for a 50% refund. Furniture needs a floor. Staff walk only on floors and through doors. Exterior walls come in three tiers: Cheap, Brick (30% insulation) and Insulated (60%); insulation keeps the desert heat out. Build a better wall over an old one to upgrade it. Carpet goes on concrete and gives staff standing on it +3% productivity. Interior Walls take a quarter tile and block walking. Generators need ground: the Portable one goes anywhere, the Diesel needs gravel or better, and the Large Diesel and Power Plant need asphalt or concrete."],
 	["Roofs and views (R)", "Every enclosed building gets a roof that hides while your mouse is inside it. R switches between Ground and Roof view. Rooftop items like AC Units and Solar Panels switch to Roof view by themselves when you pick them."],
-	["Models (M)", "Server Racks make compute. Pick a model size to train; bigger models take longer and raise capability more. Better models bring more users, and users bring revenue. Cutting corners trains faster but raises Deviation. Engineers add compute."],
-	["Staff (T)", "Hire researchers, engineers, marketers and alignment researchers, then give each a job. You don't control people directly: they need a free desk or rack for their job, and heat makes them slower."],
+	["Models (M)", "Server Racks make compute. Pick a model size to train; bigger models take longer and raise capability more. Better models bring more users, and users bring revenue. Cutting corners trains faster but raises Deviation. Engineers at an Engineer's Workstation add compute for racks within its radius."],
+	["Staff (T)", "Hire researchers, engineers, marketers and alignment researchers, then give each a job. You don't control people directly: they need a free desk, or a spot at an Engineer's Workstation, for their job, and heat makes them slower."],
 	["Board (O)", "Each quarter the board sets a target. Hit it for +15 confidence, miss it for -25. At 0% you're fired, and running out of money gets you fired faster. Safety theater fools them for a while."],
 	["Heat (H)", "Racks heat the room they're in. Hot racks throttle and hot staff slow down. An AC Unit on the room's roof cancels out about 4 racks; a Window AC on a wall handles about one. Bigger rooms heat up slower. Rooms are tinted by temperature while the Heat panel is open."],
 	["Power (P)", "Racks, ACs and red-team rigs use power. The cheapest power runs first: solar, then the grid, then batteries, then generators by fuel price. Batteries store spare solar for the night. The grid hookup is capped until you lobby for more. Generators go outside, and their smog drifts across the map."],
@@ -763,7 +770,7 @@ func _update_models_tab() -> void:
 	var hidden := "\n  Hidden by the AI: -%.1f (it says it's fine)" % (_compute_per_day() * HIDDEN_COMPUTE) if deviation >= 75.0 else ""
 	models_label.text = ("Best model: %s\nUsers: %s\nRevenue: %s/day\n\nCompute: %.1f per day\n  %d racks: %.1f\n  Engineers: %.1f\n  Red-team rigs: -%.1f%s\n"
 		+ "Training: %.1f, x%.2f research = %.1f per day\n\nTop rival: %s %s (capability %d)") % [
-		best, _num(int(users)), _money(revenue_today), _compute_per_day(), _racks(), _rack_compute(), 0.5 * _workforce("engineering"),
+		best, _num(int(users)), _money(revenue_today), _compute_per_day(), _racks(), _rack_compute(), _engineer_compute(),
 		_redteam_compute(), hidden, _training_compute(), _research_mult(), _training_speed(), rival[1], rival[2], _rival_cap()]
 	var compute := _training_speed()
 	if training.is_empty():
@@ -847,7 +854,7 @@ func _update_staff_tab() -> void:
 		elif s.seat != NO_SEAT:
 			status = "Heading to work"
 		elif JOBS[s.job].at != "":
-			status = "Needs a free %s" % ("desk" if JOBS[s.job].at == "desk" else "server rack")
+			status = "Needs a free %s" % {"desk": "desk", "eng_station": "spot at an Engineer's Workstation"}.get(JOBS[s.job].at, JOBS[s.job].at)
 		s.label.text = "%s, %s, %d%%\n%s" % [s.name, ROLES[s.role].name, int(s.productivity * 100.0), status]
 	staff_label.text = "%d staff, payroll %s/day\nProductivity %% is lowered by heat\nWorking now: Research %.1f, Engineering %.1f, Growth %.1f, Alignment %.1f" % [
 		staff.size(), _money(payroll), _workforce("research"), _workforce("engineering"), _workforce("growth"), _workforce("alignment")]
@@ -1512,9 +1519,29 @@ func _racks() -> int:
 	return n
 
 
-# Each engineer tending a rack adds half a rack's worth of compute. Hot racks throttle.
+# Engineers at a workstation add compute for racks in its radius. Hot racks throttle.
 func _compute_per_day() -> float:
-	return _rack_compute() + 0.5 * _workforce("engineering")
+	return _rack_compute() + _engineer_compute()
+
+
+func _in_eng_radius(station: Vector2i, t: Vector2i) -> bool:
+	return Vector2(t - station).length() <= ENG_RADIUS
+
+
+# Each engineer tends one rack in their workstation's radius; extra engineers add nothing.
+func _engineer_compute() -> float:
+	var total := 0.0
+	for st in objects:
+		if objects[st] != "eng_station":
+			continue
+		var crew := 0.0
+		for s in staff:
+			if s.working and s.job == "engineering" and s.seat == st:
+				crew += (1.0 if s.role == "engineer" else 0.5) * s.productivity
+		crew *= 1.0 + _research_bonus("productivity")
+		var racks := objects.keys().filter(func(r): return objects[r] == "rack" and _in_eng_radius(st, r)).size()
+		total += ENG_RACK_BONUS * minf(crew, racks)
+	return minf(total, ENG_RACK_BONUS * _racks())
 
 
 func _rack_compute() -> float:
@@ -1878,13 +1905,34 @@ func _station_spot(t: Vector2i, kind: String) -> Vector2i:
 	return NO_SEAT
 
 
+# A free standing spot within an Engineer's Workstation's radius, next to a rack if possible.
+func _eng_spot(st: Vector2i) -> Vector2i:
+	var best := NO_SEAT
+	var best_score := INF
+	var r := int(ENG_RADIUS)
+	for x in range(st.x - r, st.x + r + 1):
+		for y in range(st.y - r, st.y + r + 1):
+			var t := Vector2i(x, y)
+			if not _in_eng_radius(st, t) or not _walkable(t) \
+					or staff.any(func(o): return o.spot == t and o.seat != NO_SEAT):
+				continue
+			var by_rack := [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT].any(
+				func(d): return objects.get(t + d) == "rack" and _in_eng_radius(st, t + d))
+			var score := Vector2(t - st).length() - (10.0 if by_rack else 0.0)
+			if score < best_score:
+				best_score = score
+				best = t
+	return best
+
+
 func _find_station(s: Dictionary, here: Vector2i) -> void:
 	var kind: String = JOBS[s.job].at
+	var slots := ENG_SLOTS if kind == "eng_station" else 1
 	var best_len := 1 << 30
 	for t in objects:
-		if objects[t] != kind or staff.any(func(o): return o.seat == t):
+		if objects[t] != kind or staff.filter(func(o): return o.seat == t).size() >= slots:
 			continue
-		var spot := _station_spot(t, kind)
+		var spot := _eng_spot(t) if kind == "eng_station" else _station_spot(t, kind)
 		if spot == NO_SEAT:
 			continue
 		var path := astar.get_id_path(here, spot)
@@ -2349,6 +2397,9 @@ func _effects(id: String) -> Array:
 		var g: Dictionary = GENERATORS[id]
 		return ["Power: makes up to %d kW" % g.kw, "Fuel: $%.2f per kWh" % g.fuel, "Smog: %.2f per kWh" % g.smog]
 	match id:
+		"eng_station":
+			return ["Up to %d engineers work within %d tiles" % [ENG_SLOTS, int(ENG_RADIUS)],
+				"Each tends a rack in range: +%.1f compute" % ENG_RACK_BONUS]
 		"redteam":
 			return ["Power: uses %d kW" % REDTEAM_KW, "Eats %.1f compute a day" % REDTEAM_COMPUTE, "Deviation: -%.1f a year" % REDTEAM_ALIGN]
 		"solar":
@@ -2445,6 +2496,11 @@ func _draw() -> void:
 		draw_string(ThemeDB.fallback_font, at, rack_names[hover], HORIZONTAL_ALIGNMENT_CENTER, TILE + 68, 12, Color(0.75, 1.0, 0.8))
 	for bld in buildings:
 		_draw_roof(bld)
+	if view_level == 0:  # an Engineer's Workstation shows its work radius while placing or hovering it
+		if build_row.visible and TOOLS[tool_index].id == "eng_station" and _in_bounds(hover):
+			_draw_eng_radius(hover)
+		elif objects.get(hover) == "eng_station":
+			_draw_eng_radius(hover)
 	_draw_preview()
 
 
@@ -2544,6 +2600,30 @@ func _draw_rack(p: Vector2, t: Vector2i) -> void:
 		var on := _hash(t, i * 1000 + tick) % 3 != 0
 		var lit := Color(1.0, 0.25, 0.2) if deviation >= 50.0 else Color(0.3, 1.0, 0.5)
 		draw_rect(Rect2(Vector2(p.x + 23, y), Vector2(3, 3)), lit if on else lit.darkened(0.7))
+
+
+func _draw_eng_station(p: Vector2, t: Vector2i) -> void:
+	_ellipse(p + Vector2(16, 28), 15, 4, Color(0, 0, 0, 0.25))
+	_box(Rect2(p + Vector2(1, 14), Vector2(30, 14)), 9, Color(0.5, 0.52, 0.56), Color(0.3, 0.31, 0.35))
+	draw_rect(Rect2(p + Vector2(1, 23), Vector2(30, 3)), Color(0.95, 0.6, 0.2))  # engineering orange
+	for i in 3:  # three monitors, because one is for the logs, one for the dashboard, one for memes
+		var m := p + Vector2(2 + i * 10, -4 + (2 if i == 1 else 0))
+		draw_rect(Rect2(m, Vector2(9, 9)), Color(0.12, 0.12, 0.14))
+		var lit := (_hash(t, i) + int(_time * 1.5)) % 4 != 0
+		draw_rect(Rect2(m + Vector2(1, 1), Vector2(7, 6)), Color(0.4, 0.95, 0.6) if lit else Color(0.3, 0.6, 0.9))
+
+
+func _draw_eng_radius(st: Vector2i) -> void:
+	var r := int(ENG_RADIUS)
+	for x in range(st.x - r, st.x + r + 1):
+		for y in range(st.y - r, st.y + r + 1):
+			if _in_eng_radius(st, Vector2i(x, y)):
+				draw_rect(Rect2(Vector2(x, y) * TILE, Vector2(TILE, TILE)), Color(0.95, 0.6, 0.2, 0.12))
+	var c := _tile_center(st)
+	draw_arc(c, (ENG_RADIUS + 0.5) * TILE, 0.0, TAU, 64, Color(0.95, 0.6, 0.2, 0.8), 2.0)
+	for r_t in objects:  # mark the racks it can boost
+		if objects[r_t] == "rack" and _in_eng_radius(st, r_t):
+			draw_rect(Rect2(Vector2(r_t) * TILE, Vector2(TILE, TILE)), Color(0.95, 0.6, 0.2, 0.9), false, 2.0)
 
 
 func _draw_redteam(p: Vector2, t: Vector2i) -> void:

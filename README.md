@@ -26,7 +26,7 @@ You start with a small office in the Calizona desert, $100,000 and two founders 
 - The **Staff** tab hires Researchers, Engineers and Marketers ($5,000 recruiter fee, then a daily salary). Firing costs 5 days of salary.
 - Pick each person's job from their dropdown. They walk to a free workstation and get to work (a little busy bubble shows over their head):
   - **Research** at a desk: trains models faster (+25% each).
-  - **Engineering** at a server rack: +0.5 compute each.
+  - **Engineering** at an Engineer's Workstation (Build > Furniture, $15,000): up to 5 engineers work anywhere within 4 tiles of it, and each tends a server rack in that radius for +0.5 compute. Hover a workstation (or place one) to see its radius and the racks it covers.
   - **Growth** at a desk: +20% users each.
   - **Slack off**: wanders around.
 - Anyone can do any job, but off-role they work at half speed. No free desk or rack means no work, so build more.
