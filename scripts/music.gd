@@ -1,5 +1,5 @@
 extends Node
-## Autoload "Music": shuffles through the soundtrack, with a mute button, volume slider and M hotkey.
+## Autoload "Music": shuffles through the soundtrack, with a mute button, volume slider and N hotkey.
 ## Call Music.set_tension(true) when the Deviation meter gets scary to switch to the tense track.
 
 const CALM := [
@@ -45,7 +45,7 @@ func toggle_mute() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_M:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_N:
 		toggle_mute()
 
 
@@ -98,7 +98,7 @@ func _build_ui() -> void:
 	mute_button = Button.new()
 	mute_button.toggle_mode = true
 	mute_button.focus_mode = Control.FOCUS_NONE
-	mute_button.tooltip_text = "Mute / unmute music (M)"
+	mute_button.tooltip_text = "Mute / unmute music (N)"
 	mute_button.pressed.connect(toggle_mute)
 	row.add_child(mute_button)
 	slider = HSlider.new()

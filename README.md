@@ -39,4 +39,4 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 - The **Board** tab shows confidence, the current target, progress and days left.
 
 ## Music
-Ten synthesized demo tracks live in `audio/` and shuffle in the background (the `Music` autoload in `scripts/music.gd`). Use the Sound button, the slider, or `M` to mute. Call `Music.set_tension(true)` to switch to the tense track when Deviation climbs. Tracks are rough placeholders.
+Ten synthesized demo tracks live in `audio/` and shuffle in the background (the `Music` autoload in `scripts/music.gd`). Use the Sound button, the slider, or `N` to mute. Call `Music.set_tension(true)` to switch to the tense track when Deviation climbs. Tracks are rough placeholders.
