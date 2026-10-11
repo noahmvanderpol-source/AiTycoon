@@ -23,12 +23,13 @@ const SOLAR_KW := 2.0  # a rooftop Solar Panel at noon
 const SUN := [0.0, 0.0, 0.5, 1.0, 1.0, 0.5, 0.0, 0.0]  # by step of the day, midnight first
 const HOURS_PER_STEP := 3.0
 # Generators sit outside. fuel: $ per kWh made. smog: pollution per kWh, puffed out on their tile.
+# Pollution is 0-100 per tile; the Pollution meter is the worst tile on the map.
 # New fuel tiers (and later wind, nuclear, fusion) go here plus a TOOLS entry and a _draw_ function.
 const GENERATORS := {
-	"gen_portable": {"kw": 20.0, "fuel": 2.75, "smog": 0.05},
-	"gen_diesel": {"kw": 60.0, "fuel": 2.0, "smog": 0.05},
-	"gen_large": {"kw": 200.0, "fuel": 1.4, "smog": 0.045},
-	"power_plant": {"kw": 800.0, "fuel": 0.9, "smog": 0.025},  # trailer gas turbines, as real datacenters do
+	"gen_portable": {"kw": 20.0, "fuel": 2.75, "smog": 0.25},
+	"gen_diesel": {"kw": 60.0, "fuel": 2.0, "smog": 0.25},
+	"gen_large": {"kw": 200.0, "fuel": 1.4, "smog": 0.225},
+	"power_plant": {"kw": 800.0, "fuel": 0.9, "smog": 0.125},  # trailer gas turbines, as real datacenters do
 }
 const GRID_KW := 40.0  # the utility's cap; lobbying for more comes later
 const GRID_PRICE := 1.2  # $ per kWh. Its smog lands in someone else's zip code
@@ -238,8 +239,7 @@ var _smog_warned := false
 var battery_charge := 0.0  # kWh, shared by all batteries
 var power_stats := {}  # last step: demand, solar, grid, battery, gens (kW)
 var gen_output := {}  # Vector2i -> kW a generator made last step
-var smog := PackedFloat32Array()  # pollution per tile, GRID_W * GRID_H
-var smog_today := 0.0
+var smog := PackedFloat32Array()  # pollution per tile, 0-100, GRID_W * GRID_H
 var modal: Control  # the open pop-up, if any; the game pauses under it
 var modal_button: Button
 var _speed_before_modal := 1
@@ -601,13 +601,13 @@ func _update_power_tab() -> void:
 		gen_lines.append("%d x %s" % [gens[n], n])
 	var bats := objects.values().count("battery")
 	power_label.text = ("Demand: %d kW   Covered: %d%%\n%s\n\nSolar: %d kW (%d panels)\nGrid: %s\nBatteries: %s\nGenerators: %d kW\n%s\n\n"
-		+ "Power bill yesterday: %s\nSmog made today: %d\n\n"
+		+ "Power bill yesterday: %s\nPollution: %d/100\n\n"
 		+ "Cheapest power runs first: sun, grid, batteries, then generators by fuel price. Fuel generators go outside and their smog drifts across the map (tinted brown here). "
 		+ "Batteries store spare solar for the night. One grid hookup, capped at %d kW until you lobby for more. Solar Panels go on roofs (Build, R).") % [
 		st.demand, int(power_ratio * 100.0), "Daytime" if SUN[_power_step] > 0.0 else "Night", st.solar, roof_objects.values().count("solar"),
 		("%d of %d kW" % [st.grid, GRID_KW]) if objects.values().has("grid") else "not connected",
 		("%d, %d of %d kWh" % [bats, battery_charge, bats * BATTERY_KWH]) if bats > 0 else "none",
-		st.gens, "\n".join(gen_lines) if not gen_lines.is_empty() else "none", _money(power_bill), smog_today, GRID_KW]
+		st.gens, "\n".join(gen_lines) if not gen_lines.is_empty() else "none", _money(power_bill), _pollution(), GRID_KW]
 
 
 # A centered pop-up that pauses the game until its button is pressed.
@@ -1407,19 +1407,17 @@ func _tick_power() -> void:
 		made += out
 		gen_output[t] = out
 		_power_cost += out * h * g.fuel
-		smog[t.y * GRID_W + t.x] += out * h * g.smog
-		smog_today += out * h * g.smog
+		var i: int = t.y * GRID_W + t.x
+		smog[i] = minf(smog[i] + out * h * g.smog, 100.0)
 	power_ratio = 1.0 if demand <= 0.0 else clampf(1.0 - need / demand, 0.0, 1.0)
 	power_stats = {"demand": demand, "solar": used_solar, "grid": grid, "battery": from_bat, "gens": made}
-	if _power_step == 0:
-		smog_today = 0.0
 	_spread_smog()
 	if power_ratio < 0.99 and not _power_warned:
 		_power_warned = true
 		_chet("Bro, we're browning out. Racks and ACs are running at %d%%. Build more generators under Power (P)." % int(power_ratio * 100.0))
 	elif power_ratio >= 0.99:
 		_power_warned = false
-	if not _smog_warned and smog_today > 150.0:
+	if not _smog_warned and _pollution() > 50:
 		_smog_warned = true
 		_chet("The generators are making their own weather now. Smog drifts, bro. Power (P) shows where it's going.")
 
@@ -1443,6 +1441,14 @@ func _spread_smog() -> void:
 	smog = next
 
 
+# The Pollution meter, 0-100: the air on the worst tile.
+func _pollution() -> int:
+	var worst := 0.0
+	for v in smog:
+		worst = maxf(worst, v)
+	return int(worst)
+
+
 func _smog_at(t: Vector2i) -> float:
 	return smog[t.y * GRID_W + t.x] if _in_bounds(t) else 0.0
 
@@ -1453,9 +1459,9 @@ func _draw_smog(a: Vector2i, b: Vector2i) -> void:
 	for x in range(a.x, b.x):
 		for y in range(a.y, b.y):
 			var v := _smog_at(Vector2i(x, y))
-			if v > 0.05:
+			if v > 0.5:
 				draw_rect(Rect2(Vector2(x, y) * TILE, Vector2(TILE, TILE)),
-					Color(0.35, 0.28, 0.2, clampf(v / 10.0, 0.0, 0.7) * strength))
+					Color(0.35, 0.28, 0.2, clampf(v / 50.0, 0.0, 0.7) * strength))
 
 
 # --- Heat -------------------------------------------------------------------

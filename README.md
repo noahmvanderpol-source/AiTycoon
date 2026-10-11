@@ -51,5 +51,5 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 | Portable Power Plant ($600,000) | 800 kW | $0.90/kWh | half |
 
 - Generators and the grid hookup go outdoors. Short on power, racks and ACs all run at the share that's covered (a brownout).
-- Generators puff smog onto their tile, and it drifts to neighbouring tiles and slowly clears. A faint haze shows always; the Power panel tints it brown.
+- Pollution is 0-100 per tile (the Power panel shows the worst tile). Generators puff smog onto their tile, and it drifts to neighbouring tiles and slowly clears. A faint haze shows always; the Power panel tints it brown.
 - Fuel and grid costs are added to the daily burn.
