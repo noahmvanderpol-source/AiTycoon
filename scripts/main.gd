@@ -129,27 +129,37 @@ const RIVAL_RELEASES := [
 	[850, "MassiveHard", "Autopilot 365", 92],
 ]
 
+# Build menu categories, in the order their tabs appear. Each tool's "cat" picks its tab.
+const BUILD_CATS := [
+	{"id": "structure", "name": "Structure"},
+	{"id": "furniture", "name": "Furniture"},
+	{"id": "compute", "name": "Compute"},
+	{"id": "cooling", "name": "Cooling"},
+	{"id": "power", "name": "Power"},
+	{"id": "safety", "name": "Safety"},
+]
+
 # Every buildable thing. layer: which map layer it lives on. drag: how the mouse places it.
 # Things on the "sub" layer take one subgrid cell (a quarter tile) and don't block walking.
 const TOOLS := [
-	{"id": "carpet", "name": "Carpet", "layer": "floor", "cost": 200, "drag": "fill"},
-	{"id": "concrete", "name": "Concrete", "layer": "floor", "cost": 100, "drag": "fill"},
-	{"id": "wall", "name": "Wall", "layer": "wall", "cost": 800, "drag": "outline"},
-	{"id": "door", "name": "Door", "layer": "wall", "cost": 2500, "drag": "single"},
-	{"id": "desk", "name": "Desk", "layer": "object", "cost": 6000, "drag": "paint"},
-	{"id": "rack", "name": "Server Rack", "layer": "object", "cost": 100000, "drag": "paint"},
-	{"id": "ficus", "name": "Ficus", "layer": "object", "cost": 300, "drag": "paint"},
-	{"id": "coffee", "name": "Coffee Maker", "layer": "sub", "cost": 1500, "drag": "paint"},
-	{"id": "redteam", "name": "Red-Team Rig", "layer": "object", "cost": 40000, "drag": "paint"},
-	{"id": "solar", "name": "Solar Panel", "layer": "roof", "cost": 8000, "drag": "paint"},
-	{"id": "window_ac", "name": "Window AC", "layer": "window", "cost": 1200, "drag": "paint"},
-	{"id": "ac", "name": "AC Unit", "layer": "roof", "cost": 4500, "drag": "paint"},
-	{"id": "gen_portable", "name": "Portable Generator", "layer": "object", "cost": 2500, "drag": "paint", "menu": "power"},
-	{"id": "gen_diesel", "name": "Diesel Generator", "layer": "object", "cost": 25000, "drag": "paint", "menu": "power"},
-	{"id": "gen_large", "name": "Large Diesel", "layer": "object", "cost": 90000, "drag": "paint", "menu": "power"},
-	{"id": "power_plant", "name": "Portable Power Plant", "layer": "object", "cost": 600000, "drag": "paint", "menu": "power"},
-	{"id": "battery", "name": "Battery", "layer": "object", "cost": 30000, "drag": "paint", "menu": "power"},
-	{"id": "grid", "name": "Grid Hookup", "layer": "object", "cost": 50000, "drag": "single", "menu": "power"},
+	{"id": "carpet", "name": "Carpet", "layer": "floor", "cost": 200, "drag": "fill", "cat": "structure"},
+	{"id": "concrete", "name": "Concrete", "layer": "floor", "cost": 100, "drag": "fill", "cat": "structure"},
+	{"id": "wall", "name": "Wall", "layer": "wall", "cost": 800, "drag": "outline", "cat": "structure"},
+	{"id": "door", "name": "Door", "layer": "wall", "cost": 2500, "drag": "single", "cat": "structure"},
+	{"id": "desk", "name": "Desk", "layer": "object", "cost": 6000, "drag": "paint", "cat": "furniture"},
+	{"id": "rack", "name": "Server Rack", "layer": "object", "cost": 100000, "drag": "paint", "cat": "compute"},
+	{"id": "ficus", "name": "Ficus", "layer": "object", "cost": 300, "drag": "paint", "cat": "furniture"},
+	{"id": "coffee", "name": "Coffee Maker", "layer": "sub", "cost": 1500, "drag": "paint", "cat": "furniture"},
+	{"id": "redteam", "name": "Red-Team Rig", "layer": "object", "cost": 40000, "drag": "paint", "cat": "safety"},
+	{"id": "window_ac", "name": "Window AC", "layer": "window", "cost": 1200, "drag": "paint", "cat": "cooling"},
+	{"id": "ac", "name": "AC Unit", "layer": "roof", "cost": 4500, "drag": "paint", "cat": "cooling"},
+	{"id": "gen_portable", "name": "Portable Generator", "layer": "object", "cost": 2500, "drag": "paint", "cat": "power"},
+	{"id": "gen_diesel", "name": "Diesel Generator", "layer": "object", "cost": 25000, "drag": "paint", "cat": "power"},
+	{"id": "gen_large", "name": "Large Diesel", "layer": "object", "cost": 90000, "drag": "paint", "cat": "power"},
+	{"id": "power_plant", "name": "Portable Power Plant", "layer": "object", "cost": 600000, "drag": "paint", "cat": "power"},
+	{"id": "battery", "name": "Battery", "layer": "object", "cost": 30000, "drag": "paint", "cat": "power"},
+	{"id": "grid", "name": "Grid Hookup", "layer": "object", "cost": 50000, "drag": "single", "cat": "power"},
+	{"id": "solar", "name": "Solar Panel", "layer": "roof", "cost": 8000, "drag": "paint", "cat": "power"},
 	{"id": "demolish", "name": "Demolish", "layer": "", "cost": 0, "drag": "fill"},
 ]
 
@@ -172,7 +182,7 @@ const CHET_TIPS := [
 	"Deviation (V) is how much the AI does its own thing. Every rack adds a bit. Alignment Researchers fix it. Allegedly.",
 	"Red-Team Rigs eat compute to yell at the model until it behaves. Like a performance review, bro.",
 	"Safety blog posts don't lower Deviation. They do lower the board's blood pressure. Same thing, kind of.",
-	"Power (P) is where the electrons come from. Diesel is cheap to buy and expensive to run. Like me.",
+	"Generators are under Build (B), Power. Power (P) shows where the electrons go. Diesel is cheap to buy and expensive to run. Like me.",
 	"Generators puff smog. It drifts. Technically that's the neighbours' air now.",
 ]
 
@@ -237,7 +247,8 @@ var speed_buttons := []
 var ui_layer: CanvasLayer
 var tabs: TabContainer
 var side_panel: Control
-var build_row: HBoxContainer
+var build_row: Control  # the build bar: category tabs above the tools in that category
+var cat_buttons := {}  # build category id -> Button
 var menu_buttons := {}  # menu id -> Button
 
 # The menu row along the bottom. Panels open from here by click or hotkey; add new ones to this list.
@@ -248,8 +259,9 @@ const MENUS := [
 	{"id": "staff", "name": "Staff", "key": KEY_T, "tab": 1},
 	{"id": "board", "name": "Board", "key": KEY_O, "tab": 2},
 	{"id": "heat", "name": "Heat", "key": KEY_H, "tab": 3},
-	{"id": "power", "name": "Power", "key": KEY_P, "tab": 4},  # also opens the build bar with power tools
+	{"id": "power", "name": "Power", "key": KEY_P, "tab": 4},
 	{"id": "deviation", "name": "Deviation", "key": KEY_V, "tab": 5},
+	{"id": "guide", "name": "Guide", "key": KEY_G, "tab": 6},
 ]
 var models_label: Label
 var train_label: Label
@@ -268,7 +280,7 @@ var dev_info_label: Label
 var theater_button: Button
 var rush_check: CheckBox
 var power_label: Label
-var build_menu := "build"  # which tools the build bar shows: "build" or "power"
+var build_cat := "structure"  # which build category's tools the build bar shows
 var power_ratio := 1.0  # share of demand covered last step
 var power_bill := 0  # yesterday's fuel and grid bill
 var _power_cost := 0.0  # today's so far
@@ -306,7 +318,8 @@ func _ready() -> void:
 	add_child(camera)
 	_build_ui()
 	view_level = LEVELS.size() - 1
-	_toggle_level()  # wraps round to the ground floor and labels the toolbar
+	_toggle_level()  # wraps round to the ground floor
+	_set_build_cat(BUILD_CATS[0].id)
 	_new_target(0)
 	_ask_company_name()
 
@@ -377,10 +390,22 @@ func _build_ui() -> void:
 	chet_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5))
 	chet_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(chet_label)
-	var row := HBoxContainer.new()
-	build_row = row
-	row.visible = false
-	col.add_child(row)
+	var build_box := VBoxContainer.new()
+	build_row = build_box
+	build_box.visible = false
+	col.add_child(build_box)
+	var cat_row := HBoxContainer.new()
+	build_box.add_child(cat_row)
+	for c in BUILD_CATS:
+		var cb := Button.new()
+		cb.text = c.name
+		cb.toggle_mode = true
+		cb.focus_mode = Control.FOCUS_NONE
+		cb.pressed.connect(_set_build_cat.bind(c.id))
+		cat_row.add_child(cb)
+		cat_buttons[c.id] = cb
+	var row := HFlowContainer.new()  # wraps when a category has lots of tools
+	build_box.add_child(row)
 	level_button = Button.new()
 	level_button.focus_mode = Control.FOCUS_NONE
 	level_button.add_theme_font_size_override("font_size", 14)
@@ -426,6 +451,7 @@ func _build_ui() -> void:
 	_build_heat_tab()
 	_build_power_tab()
 	_build_deviation_tab()
+	_build_guide_tab()
 
 	cost_label = Label.new()
 	cost_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -433,6 +459,40 @@ func _build_ui() -> void:
 	cost_label.visible = false
 	layer.add_child(cost_label)
 	_chet(CHET_TIPS[0])
+
+
+# How everything works, in one place, so the other panels can stick to numbers.
+const GUIDE := [
+	["Getting started", "You run an AI startup in Calizona. Train models to get users, users bring revenue, and keep the board happy until your AI is smart enough to replace you as CEO. You win? If the board loses all confidence you're fired. If Deviation hits 100% the AI takes over."],
+	["Building (B)", "Open Build and pick a category tab (Tab cycles them). Left drag to build: floors fill a box, walls draw a box outline, furniture paints, doors place one at a time. Right click demolishes for a 50% refund. Furniture needs a floor. Staff walk only on floors and through doors."],
+	["Roofs and views (R)", "Every enclosed building gets a roof that hides while your mouse is inside it. R switches between Ground and Roof view. Rooftop items like AC Units and Solar Panels switch to Roof view by themselves when you pick them."],
+	["Models (M)", "Server Racks make compute. Pick a model size to train; bigger models take longer and raise capability more. Better models bring more users, and users bring revenue. Cutting corners trains faster but raises Deviation. Engineers add compute."],
+	["Staff (T)", "Hire researchers, engineers, marketers and alignment researchers, then give each a job. You don't control people directly: they need a free desk or rack for their job, and heat makes them slower."],
+	["Board (O)", "Each quarter the board sets a target. Hit it for +15 confidence, miss it for -25. At 0% you're fired, and running out of money gets you fired faster. Safety theater fools them for a while."],
+	["Heat (H)", "Racks heat the room they're in. Hot racks throttle and hot staff slow down. An AC Unit on the room's roof cancels out about 4 racks; a Window AC on a wall handles about one. Bigger rooms heat up slower. Rooms are tinted by temperature while the Heat panel is open."],
+	["Power (P)", "Racks, ACs and red-team rigs use power. The cheapest power runs first: solar, then the grid, then batteries, then generators by fuel price. Batteries store spare solar for the night. The grid hookup is capped until you lobby for more. Generators go outside, and their smog drifts across the map."],
+	["Deviation (V)", "Every rack adds Deviation, and training, cutting corners and smarter models raise the rate. Alignment researchers at desks and Red-Team Rigs bring it back down (rigs eat compute). At 25% the AI gets quirky, at 50% it sabotages rivals for you and scandals follow, at 75% it hides compute, lies on reports and staff quit. At 100% it takes over."],
+	["Speed", "Space pauses. The buttons top right run time at 1x, 2x or 4x. A quarter lasts 15 minutes at 1x. N mutes the music."],
+]
+
+
+func _build_guide_tab() -> void:
+	var box := _tab_box("Guide")
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(300, 420)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	box.add_child(scroll)
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_theme_constant_override("separation", 4)
+	scroll.add_child(col)
+	for section in GUIDE:
+		var h := Label.new()
+		h.text = section[0]
+		h.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5))
+		col.add_child(h)
+		var body := _wrap_label(col)
+		body.text = section[1] + "\n"
 
 
 func _tab_box(title: String) -> VBoxContainer:
@@ -567,7 +627,7 @@ func _update_staff_tab() -> void:
 		elif JOBS[s.job].at != "":
 			status = "Needs a free %s" % ("desk" if JOBS[s.job].at == "desk" else "server rack")
 		s.label.text = "%s, %s, %d%%\n%s" % [s.name, ROLES[s.role].name, int(s.productivity * 100.0), status]
-	staff_label.text = "%d staff, payroll %s/day\nPercent is productivity (heat lowers it)\nWorking now: Research %.1f, Engineering %.1f, Growth %.1f, Alignment %.1f" % [
+	staff_label.text = "%d staff, payroll %s/day\nProductivity %% is lowered by heat\nWorking now: Research %.1f, Engineering %.1f, Growth %.1f, Alignment %.1f" % [
 		staff.size(), _money(payroll), _workforce("research"), _workforce("engineering"), _workforce("growth"), _workforce("alignment")]
 
 
@@ -598,7 +658,7 @@ func _update_board_tab() -> void:
 	var lines := []
 	for m in BOARD:
 		lines.append("%s, %s" % [m.name, m.seat])
-	board_members_label.text = "Mood: %s\n\n%s\n\nHit a target: +15. Miss: -25. At 0%% you're fired. Run out of money and you're fired faster." % [
+	board_members_label.text = "Mood: %s\n\n%s\n\nRaised by: hitting targets, safety theater\nLowered by: missed targets, running low on money" % [
 		mood, "\n".join(lines)]
 
 
@@ -627,11 +687,9 @@ func _update_heat_tab() -> void:
 		if COOLERS.has(c[1]):
 			cool_power += COOLERS[c[1]].power
 	heat_label.text = ("Rooms:\n%s\n\nRack compute lost to heat: %.1f of %d\nStaff productivity: %d%%\nCooling power: %d kW\n\n"
-		+ "Racks heat their room. Racks throttle above %d°F, staff slow down above %d°F. "
-		+ "Put AC Units on the room's roof (R in Build). Each one cancels out about 4 racks. Window ACs go on walls (B) and handle about one. Bigger rooms heat up slower.\n\n"
-		+ "Rooms are tinted by temperature while this panel is open.") % [
+		+ "Raised by: racks\nLowered by: AC Units, Window ACs, bigger rooms") % [
 		"\n".join(lines) if not lines.is_empty() else "none", _racks() - _rack_compute(), _racks(), int(prod * 100.0),
-		cool_power, RACK_SAFE_TEMP, COMFORT_TEMP]
+		cool_power]
 
 
 func _build_power_tab() -> void:
@@ -654,8 +712,7 @@ func _update_power_tab() -> void:
 	var bats := objects.values().count("battery")
 	power_label.text = ("Demand: %d kW   Covered: %d%%\n%s\n\nSolar: %d kW (%d panels)\nGrid: %s\nBatteries: %s\nGenerators: %d kW\n%s\n\n"
 		+ "Power bill yesterday: %s\nSmog made today: %d\n\n"
-		+ "Cheapest power runs first: sun, grid, batteries, then generators by fuel price. Fuel generators go outside and their smog drifts across the map (tinted brown here). "
-		+ "Batteries store spare solar for the night. One grid hookup, capped at %d kW until you lobby for more. Solar Panels go on roofs (Build, R).") % [
+		+ "Used by: racks, AC units, red-team rigs\nSupplied by: solar, grid (max %d kW), batteries, generators") % [
 		st.demand, int(power_ratio * 100.0), "Daytime" if SUN[_power_step] > 0.0 else "Night", st.solar, roof_objects.values().count("solar"),
 		("%d of %d kW" % [st.grid, GRID_KW]) if objects.values().has("grid") else "not connected",
 		("%d, %d of %d kWh" % [bats, battery_charge, bats * BATTERY_KWH]) if bats > 0 else "none",
@@ -695,12 +752,10 @@ func _update_deviation_tab() -> void:
 		lines.append("  %s: %+d%%" % [m[0], roundi(m[1] * 100.0)])
 	for c in _deviation_counters():
 		lines.append("%s: -%.2f" % [c[0], c[1]])
-	var effects := ["25%: odd quirks", "50%: sabotages rivals for you, scandals follow", "75%: hides compute, lies on reports, staff quit", "100%: takeover"]
-	for i in dev_level:
-		effects[i] += "  (now)"
-	dev_info_label.text = ("Per year:\n%s\nNet: %+.2f a year\n\n%s\n\n"
-		+ "Every rack adds Deviation. Training, cutting corners and smarter models raise the rate. Alignment Researchers at desks (Staff, T) and Red-Team Rigs (Build) take it back off. Rigs eat compute.") % [
-		"\n".join(lines), _deviation_per_year(), "\n".join(effects)]
+	var effects := ["none yet", "odd quirks", "sabotaging rivals, scandals", "hiding compute, lying, staff quitting", "takeover"]
+	dev_info_label.text = ("Per year:\n%s\nNet: %+.2f a year\nEffects now: %s\n\n"
+		+ "Raised by: racks, training, cutting corners, smarter models\nLowered by: alignment researchers, red-team rigs") % [
+		"\n".join(lines), _deviation_per_year(), effects[mini(dev_level, effects.size() - 1)]]
 	var q := (day - 1) / DAYS_PER_QUARTER
 	theater_button.disabled = theater_quarter == q or money < THEATER_COST
 
@@ -778,27 +833,31 @@ func _tool_level(tool: Dictionary) -> int:
 	return 1 if tool.layer == "roof" else 0
 
 
-# Indices of the tools usable on the current view level, demolish last.
+# Indices of the tools in the current build category, demolish last.
 func _level_tools() -> Array:
 	var out := []
 	for i in TOOLS.size():
 		if TOOLS[i].id == "demolish":
 			continue
-		if TOOLS[i].get("menu", "build") == build_menu and (build_menu == "power" or _tool_level(TOOLS[i]) == view_level):
+		if TOOLS[i].cat == build_cat:
 			out.append(i)
 	out.append(TOOLS.size() - 1)
 	return out
 
 
 func _toggle_level() -> void:
-	if build_menu == "power":  # power tools are all on the ground
-		return
 	view_level = (view_level + 1) % LEVELS.size()
+	level_button.text = "R  View: %s" % LEVELS[view_level]
+
+
+func _set_build_cat(id: String) -> void:
+	build_cat = id
+	for c in cat_buttons:
+		cat_buttons[c].button_pressed = c == id
 	_label_tools()
 
 
 func _label_tools() -> void:
-	level_button.visible = build_menu == "build"
 	level_button.text = "R  View: %s" % LEVELS[view_level]
 	var shown := _level_tools()
 	for i in TOOLS.size():
@@ -811,36 +870,26 @@ func _label_tools() -> void:
 
 # Build toggles the build bar; the other menus share the side panel, one at a time.
 func _toggle_menu(id: String) -> void:
-	if id == "build" or id == "power":
+	if id == "build":
+		build_row.visible = not build_row.visible
 		dragging = false
 		paint_tiles.clear()
-	if id == "build":
-		build_row.visible = not build_row.visible or build_menu != "build"
-		if build_menu != "build":
-			build_menu = "build"
-			_label_tools()
-		if side_panel.visible and tabs.current_tab == 4:
-			side_panel.visible = false
 	else:
 		var m: Dictionary = MENUS.filter(func(x): return x.id == id)[0]
 		var reopen: bool = not side_panel.visible or tabs.current_tab != m.tab
 		side_panel.visible = reopen
 		if reopen:
 			tabs.current_tab = m.tab
-		if id == "power" or build_menu == "power":  # the power panel brings its own tools
-			build_menu = "power" if reopen and id == "power" else "build"
-			build_row.visible = build_menu == "power"
-			if build_menu == "power" and view_level != 0:
-				view_level = 0
-			_label_tools()
 	for m in MENUS:
-		var open: bool = (build_row.visible and build_menu == "build") if m.id == "build" else side_panel.visible and tabs.current_tab == m.get("tab", -1)
+		var open: bool = build_row.visible if m.id == "build" else side_panel.visible and tabs.current_tab == m.get("tab", -1)
 		menu_buttons[m.id].button_pressed = open
 
 
 func _select_tool(i: int) -> void:
 	tool_index = i
 	dragging = false
+	if TOOLS[i].id != "demolish" and _tool_level(TOOLS[i]) != view_level:
+		_toggle_level()  # rooftop tools switch to Roof view, ground tools back to Ground
 	for j in tool_buttons.size():
 		tool_buttons[j].button_pressed = j == i
 
@@ -951,6 +1000,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_select_tool(shown[event.keycode - KEY_1])
 		elif event.keycode == KEY_R:
 			_toggle_level()
+		elif event.keycode == KEY_TAB and build_row.visible:  # next build category
+			var ids := BUILD_CATS.map(func(c): return c.id)
+			_set_build_cat(ids[(ids.find(build_cat) + 1) % ids.size()])
 		elif event.keycode == KEY_X and build_row.visible:
 			_select_tool(TOOLS.size() - 1)
 		elif event.keycode == KEY_SPACE:
@@ -1640,7 +1692,7 @@ func _tick_power() -> void:
 	_spread_smog()
 	if power_ratio < 0.99 and not _power_warned:
 		_power_warned = true
-		_chet("Bro, we're browning out. Racks and ACs are running at %d%%. Build more generators under Power (P)." % int(power_ratio * 100.0))
+		_chet("Bro, we're browning out. Racks and ACs are running at %d%%. Build more generators: Build (B), Power tab." % int(power_ratio * 100.0))
 	elif power_ratio >= 0.99:
 		_power_warned = false
 	if not _smog_warned and smog_today > 150.0:
