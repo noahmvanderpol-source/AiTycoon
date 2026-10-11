@@ -1036,7 +1036,14 @@ func _unhandled_input(event: InputEvent) -> void:
 				_zoom(1.0 / 1.1)
 
 
+func _mouse_over_ui() -> bool:
+	var vp := get_viewport()
+	return vp.has_method("gui_get_hovered_control") and vp.call("gui_get_hovered_control") != null
+
+
 func _zoom(factor: float) -> void:
+	if _mouse_over_ui():  # scrolling a menu shouldn't zoom the map
+		return
 	var before := get_global_mouse_position()
 	camera.zoom = (camera.zoom * factor).clamp(Vector2(0.4, 0.4), Vector2(3, 3))
 	camera.force_update_scroll()
