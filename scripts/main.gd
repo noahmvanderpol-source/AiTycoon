@@ -22,14 +22,14 @@ const RACK_KW := 6.0
 const SOLAR_KW := 2.0  # a rooftop Solar Panel at noon
 const SUN := [0.0, 0.0, 0.5, 1.0, 1.0, 0.5, 0.0, 0.0]  # by step of the day, midnight first
 const HOURS_PER_STEP := 3.0
-# Generators sit outside. fuel: $ per kWh made. smog: pollution per kWh, puffed out on their tile.
+# Generators sit outside. size: tiles wide and deep, placed from the top-left tile. fuel: $ per kWh made. smog: pollution per kWh, puffed out on their tile.
 # Pollution is 0-100 per tile; the Pollution meter is the worst tile on the map.
 # New fuel tiers (and later wind, nuclear, fusion) go here plus a TOOLS entry and a _draw_ function.
 const GENERATORS := {
-	"gen_portable": {"kw": 20.0, "fuel": 2.75, "smog": 0.25},
-	"gen_diesel": {"kw": 60.0, "fuel": 2.0, "smog": 0.25},
-	"gen_large": {"kw": 200.0, "fuel": 1.4, "smog": 0.225},
-	"power_plant": {"kw": 800.0, "fuel": 0.9, "smog": 0.125},  # trailer gas turbines, as real datacenters do
+	"gen_portable": {"kw": 20.0, "fuel": 2.75, "smog": 0.25, "size": Vector2i(1, 1)},
+	"gen_diesel": {"kw": 60.0, "fuel": 2.0, "smog": 0.25, "size": Vector2i(2, 1)},
+	"gen_large": {"kw": 200.0, "fuel": 1.4, "smog": 0.225, "size": Vector2i(6, 2)},
+	"power_plant": {"kw": 800.0, "fuel": 0.9, "smog": 0.125, "size": Vector2i(5, 3)},  # trailer gas turbines, as real datacenters do
 }
 const GRID_KW := 40.0  # the utility's cap; lobbying for more comes later
 const GRID_PRICE := 1.2  # $ per kWh. Its smog lands in someone else's zip code
@@ -241,6 +241,7 @@ var _power_warned := false
 var _smog_warned := false
 var battery_charge := 0.0  # kWh, shared by all batteries
 var power_stats := {}  # last step: demand, solar, grid, battery, gens (kW)
+var parts := {}  # Vector2i -> top-left tile of the big object covering it (objects holds "part" there)
 var gen_output := {}  # Vector2i -> kW a generator made last step
 var smog := PackedFloat32Array()  # pollution per tile, 0-100, GRID_W * GRID_H
 var modal: Control  # the open pop-up, if any; the game pauses under it
@@ -960,7 +961,10 @@ func _can_place(id: String, t: Vector2i) -> bool:
 		"gen_portable", "gen_diesel", "gen_large", "power_plant", "grid":  # outdoors only, bro. Fumes.
 			if id == "grid" and objects.values().has("grid"):
 				return false
-			return not _roofed(t) and not objects.has(t) and _subs_in(t).is_empty()
+			for f in _footprint(id, t):
+				if not _in_bounds(f) or _roofed(f) or wall_tiles.has(f) or objects.has(f) or not _subs_in(f).is_empty():
+					return false
+			return true
 		"battery":
 			return not wall_tiles.has(t) and not objects.has(t) and _subs_in(t).is_empty()
 		"demolish":
@@ -969,6 +973,16 @@ func _can_place(id: String, t: Vector2i) -> bool:
 			return objects.has(t) or wall_tiles.has(t) or window_objects.has(t) or floor_tiles.has(t) or not _subs_in(t).is_empty()
 	# furniture
 	return floor_tiles.has(t) and not wall_tiles.has(t) and not objects.has(t) and _subs_in(t).is_empty()
+
+
+# Tiles an object covers when its top-left tile is t.
+func _footprint(id: String, t: Vector2i) -> Array:
+	var size: Vector2i = GENERATORS[id].size if GENERATORS.has(id) else Vector2i.ONE
+	var out := []
+	for x in size.x:
+		for y in size.y:
+			out.append(t + Vector2i(x, y))
+	return out
 
 
 func _tool_by_id(id: String) -> Dictionary:
@@ -997,7 +1011,15 @@ func _commit(tiles: Array) -> void:
 		match tool.layer:
 			"floor": floor_tiles[t] = tool.id
 			"wall": wall_tiles[t] = tool.id
-			"object": objects[t] = tool.id
+			"object":
+				if not _can_place(tool.id, t):  # an earlier big one in this drag took the space
+					money += tool.cost
+					continue
+				objects[t] = tool.id
+				for f in _footprint(tool.id, t):
+					if f != t:
+						objects[f] = "part"
+						parts[f] = t
 			"sub": sub_objects[t] = tool.id
 			"roof": roof_objects[t] = tool.id
 			"window": window_objects[t] = tool.id
@@ -1022,9 +1044,14 @@ func _demolish(t: Vector2i) -> void:
 			money += int(_tool_by_id(sub_objects[c]).cost / 2)
 			sub_objects.erase(c)
 		return
+	t = parts.get(t, t)  # any tile of a big generator demolishes the whole thing
 	for layer in [objects, wall_tiles, floor_tiles]:
 		if layer.has(t):
 			money += int(_tool_by_id(layer[t]).cost / 2)
+			for f in _footprint(layer[t], t):
+				if parts.get(f) == t:
+					objects.erase(f)
+					parts.erase(f)
 			layer.erase(t)
 			return
 
@@ -1415,7 +1442,8 @@ func _tick_power() -> void:
 		made += out
 		gen_output[t] = out
 		_power_cost += out * h * g.fuel
-		var i: int = t.y * GRID_W + t.x
+		var c: Vector2i = t + GENERATORS[objects[t]].size / 2
+		var i: int = c.y * GRID_W + c.x
 		smog[i] = minf(smog[i] + out * h * g.smog, 100.0)
 	power_ratio = 1.0 if demand <= 0.0 else clampf(1.0 - need / demand, 0.0, 1.0)
 	power_stats = {"demand": demand, "solar": used_solar, "grid": grid, "battery": from_bat, "gens": made}
@@ -1743,9 +1771,12 @@ func _draw() -> void:
 	# so anything further south overlaps what's behind it.
 	var rows := {}
 	for t in wall_tiles.keys() + objects.keys():
-		if not rows.has(t.y):
-			rows[t.y] = []
-		rows[t.y].append(t)
+		if objects.get(t) == "part" and not wall_tiles.has(t):
+			continue
+		var r: int = _footprint(objects.get(t, ""), t).back().y if objects.has(t) else t.y  # big things draw with their front row
+		if not rows.has(r):
+			rows[r] = []
+		rows[r].append(t)
 	for c in sub_objects:
 		var r := _tile_of_sub(c).y
 		if not rows.has(r):
@@ -1873,33 +1904,48 @@ func _draw_ficus(p: Vector2, _t: Vector2i) -> void:
 	draw_circle(p + Vector2(18, -6), 4, Color(0.32, 0.62, 0.32))
 
 
-func _draw_gen_body(p: Vector2, t: Vector2i, w: float, h: float, col: Color) -> void:
-	_ellipse(p + Vector2(16, 28), w / 2 + 2, 4, Color(0, 0, 0, 0.25))
-	_box(Rect2(p + Vector2(16 - w / 2, 28 - h), Vector2(w, h)), h * 0.6, col.lightened(0.15), col.darkened(0.3))
-	if gen_output.get(t, 0.0) > 0.0:  # running: a puff of exhaust drifts up
-		var k := fmod(_time * 0.8 + t.x * 0.37, 1.0)
-		draw_circle(p + Vector2(16 + w / 2 - 4, 28 - h * 1.6 - 10 * k), 3 + 4 * k, Color(0.3, 0.3, 0.3, 0.5 * (1.0 - k)))
+# A generator box covering its footprint (size in tiles), with exhaust puffs at `stacks` while it runs.
+func _draw_gen_body(p: Vector2, t: Vector2i, size: Vector2i, h: float, col: Color, stacks: Array) -> void:
+	var w := size.x * TILE
+	var d := size.y * TILE
+	_ellipse(p + Vector2(w / 2.0, d - 4), w / 2.0, 5, Color(0, 0, 0, 0.25))
+	_box(Rect2(p + Vector2(3, 6), Vector2(w - 6, d - 8)), h, col.lightened(0.15), col.darkened(0.3))
+	if gen_output.get(t, 0.0) > 0.0:  # running: puffs of exhaust drift up
+		for i in stacks.size():
+			var k := fmod(_time * 0.8 + t.x * 0.37 + i * 0.3, 1.0)
+			draw_circle(p + stacks[i] - Vector2(0, 10 * k), 3 + 5 * k, Color(0.3, 0.3, 0.3, 0.5 * (1.0 - k)))
 
 
 func _draw_gen_portable(p: Vector2, t: Vector2i) -> void:
-	_draw_gen_body(p, t, 18, 12, Color(0.85, 0.65, 0.15))
-	draw_rect(Rect2(p + Vector2(9, 8), Vector2(14, 2)), Color(0.15, 0.15, 0.15))  # handle
+	_draw_gen_body(p + Vector2(6, 10), t, Vector2i.ONE, 10, Color(0.85, 0.65, 0.15), [Vector2(18, -6)])
+	draw_rect(Rect2(p + Vector2(10, 4), Vector2(12, 2)), Color(0.15, 0.15, 0.15))  # handle
 
 
 func _draw_gen_diesel(p: Vector2, t: Vector2i) -> void:
-	_draw_gen_body(p, t, 26, 16, Color(0.25, 0.45, 0.3))
+	_draw_gen_body(p, t, Vector2i(2, 1), 16, Color(0.25, 0.45, 0.3), [Vector2(52, -14)])
+	draw_rect(Rect2(p + Vector2(48, -14), Vector2(5, 6)), Color(0.2, 0.2, 0.2))  # exhaust
+	for k in 4:  # radiator grille
+		draw_line(p + Vector2(8 + k * 4, 16), p + Vector2(8 + k * 4, 26), Color(0.12, 0.22, 0.15))
 
 
 func _draw_gen_large(p: Vector2, t: Vector2i) -> void:
-	_draw_gen_body(p, t, 30, 22, Color(0.75, 0.75, 0.72))
-	draw_rect(Rect2(p + Vector2(23, -10), Vector2(4, 10)), Color(0.2, 0.2, 0.2))  # exhaust stack
+	# A shipping-container genset.
+	_draw_gen_body(p, t, Vector2i(6, 2), 26, Color(0.75, 0.75, 0.72), [Vector2(40, -26), Vector2(150, -26)])
+	for k in 22:  # container ribs
+		draw_line(p + Vector2(8 + k * 8, 34), p + Vector2(8 + k * 8, 56), Color(0.55, 0.55, 0.52))
+	for x in [36, 146]:
+		draw_rect(Rect2(p + Vector2(x, -26), Vector2(8, 14)), Color(0.2, 0.2, 0.2))  # exhaust stacks
 
 
 func _draw_power_plant(p: Vector2, t: Vector2i) -> void:
-	draw_rect(Rect2(p + Vector2(1, 26), Vector2(30, 4)), Color(0.15, 0.15, 0.15))  # trailer bed
-	_draw_gen_body(p, t, 30, 18, Color(0.9, 0.9, 0.92))
-	for k in 2:
-		draw_rect(Rect2(p + Vector2(6 + 14 * k, -12), Vector2(6, 12)), Color(0.55, 0.55, 0.58))  # turbine stacks
+	# Trailer-mounted gas turbines, as real datacenters do.
+	draw_rect(Rect2(p + Vector2(4, 82), Vector2(152, 8)), Color(0.15, 0.15, 0.15))  # trailer beds
+	for x in [20, 70, 120]:
+		draw_circle(p + Vector2(x, 90), 5, Color(0.1, 0.1, 0.1))  # wheels
+	_draw_gen_body(p, t, Vector2i(5, 3), 30, Color(0.9, 0.9, 0.92), [Vector2(30, -34), Vector2(80, -34), Vector2(130, -34)])
+	for x in [24, 74, 124]:
+		draw_rect(Rect2(p + Vector2(x, -34), Vector2(12, 24)), Color(0.55, 0.55, 0.58))  # turbine stacks
+	draw_string(ThemeDB.fallback_font, p + Vector2(10, 70), "TEMPORARY*", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.3, 0.3, 0.35))
 
 
 func _draw_battery(p: Vector2, _t: Vector2i) -> void:
@@ -1969,5 +2015,6 @@ func _draw_preview() -> void:
 		if tool.id == "demolish" and not ok:
 			c = Color(1, 1, 1, 0.15)
 		draw_rect(Rect2(Vector2(t) * size, Vector2(size, size)), c)
-	draw_rect(Rect2(Vector2(_cursor()) * size, Vector2(size, size)), Color(1, 1, 1, 0.8), false, 2.0)
+	var foot := Vector2(GENERATORS[tool.id].size) if GENERATORS.has(tool.id) else Vector2.ONE
+	draw_rect(Rect2(Vector2(_cursor()) * size, foot * size), Color(1, 1, 1, 0.8), false, 2.0)
 	draw_set_transform(Vector2.ZERO)
