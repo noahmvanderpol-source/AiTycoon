@@ -6,7 +6,7 @@ extends Node2D
 
 const TILE := 32
 const SUB := TILE / 2  # each tile splits into a 2x2 subgrid for small, precisely placed items
-const WALL_H := 22.0  # how tall walls look in the three-quarter view
+const WALL_H := 30.0  # how tall walls look in the three-quarter view
 const GRID_W := 64
 const GRID_H := 48
 const PAN_SPEED := 700.0
@@ -16,6 +16,7 @@ const FOUNDER_SALARY := 1200  # the founders took equity instead (the fools)
 const RECRUITER_FEE := 5000
 const SEVERANCE_DAYS := 5
 const RACK_POWER_PER_DAY := 400
+const SOLAR_SAVING := 60  # each rooftop solar panel knocks this off the rack power bill
 const REVENUE_PER_USER := 0.05  # dollars per user per day
 const WIN_CAPABILITY := 100
 
@@ -76,6 +77,8 @@ const TOOLS := [
 	{"id": "rack", "name": "Server Rack", "layer": "object", "cost": 100000, "drag": "paint"},
 	{"id": "ficus", "name": "Ficus", "layer": "object", "cost": 300, "drag": "paint"},
 	{"id": "coffee", "name": "Coffee Maker", "layer": "sub", "cost": 1500, "drag": "paint"},
+	{"id": "solar", "name": "Solar Panel", "layer": "roof", "cost": 8000, "drag": "paint"},
+	{"id": "ac", "name": "AC Unit", "layer": "roof", "cost": 3000, "drag": "paint"},
 	{"id": "demolish", "name": "Demolish", "layer": "", "cost": 0, "drag": "fill"},
 ]
 
@@ -123,6 +126,10 @@ var drag_start := Vector2i.ZERO
 var paint_tiles := {}
 var panning := false
 
+# View levels: 0 is the ground floor, 1 the roof. More storeys can slot in between later.
+const LEVELS := ["Ground", "Roof"]
+var view_level := 0
+var roof_objects := {}  # Vector2i -> "solar" / "ac", things built on roofs
 var buildings := []  # [{tiles: {Vector2i: true}, alpha}] each enclosed room gets a roof
 var staff := []  # [{name, role, job, salary, pos, path, wait, seat, spot, working, label}]
 var astar := AStarGrid2D.new()
@@ -137,6 +144,7 @@ var top_label: Label
 var chet_label: Label
 var cost_label: Label
 var tool_buttons := []
+var level_button: Button
 var speed_buttons := []
 var ui_layer: CanvasLayer
 var tabs: TabContainer
@@ -173,7 +181,8 @@ func _ready() -> void:
 	camera.zoom = Vector2(1.4, 1.4)
 	add_child(camera)
 	_build_ui()
-	_select_tool(0)
+	view_level = LEVELS.size() - 1
+	_toggle_level()  # wraps round to the ground floor and labels the toolbar
 	_new_target(0)
 	_ask_company_name()
 
@@ -195,6 +204,7 @@ func _build_starter_office() -> void:
 	objects[Vector2i(34, 19)] = "rack"
 	objects[Vector2i(34, 20)] = "rack"
 	objects[Vector2i(25, 25)] = "ficus"
+	roof_objects[Vector2i(30, 21)] = "ac"
 
 
 # --- UI ---------------------------------------------------------------------
@@ -244,11 +254,13 @@ func _build_ui() -> void:
 	col.add_child(chet_label)
 	var row := HBoxContainer.new()
 	col.add_child(row)
+	level_button = Button.new()
+	level_button.focus_mode = Control.FOCUS_NONE
+	level_button.add_theme_font_size_override("font_size", 14)
+	level_button.pressed.connect(_toggle_level)
+	row.add_child(level_button)
 	for i in TOOLS.size():
-		var tool: Dictionary = TOOLS[i]
 		var b := Button.new()
-		var key := "X" if tool.id == "demolish" else str(i + 1)
-		b.text = "%s  %s" % [key, tool.name] if tool.cost == 0 else "%s  %s  %s" % [key, tool.name, _money(tool.cost)]
 		b.toggle_mode = true
 		b.focus_mode = Control.FOCUS_NONE
 		b.add_theme_font_size_override("font_size", 14)
@@ -492,6 +504,31 @@ func _ask_company_name() -> void:
 	edit.call_deferred("grab_focus")
 
 
+func _tool_level(tool: Dictionary) -> int:
+	return 1 if tool.layer == "roof" else 0
+
+
+# Indices of the tools usable on the current view level, demolish last.
+func _level_tools() -> Array:
+	var out := []
+	for i in TOOLS.size():
+		if TOOLS[i].id == "demolish" or _tool_level(TOOLS[i]) == view_level:
+			out.append(i)
+	return out
+
+
+func _toggle_level() -> void:
+	view_level = (view_level + 1) % LEVELS.size()
+	level_button.text = "R  View: %s" % LEVELS[view_level]
+	var shown := _level_tools()
+	for i in TOOLS.size():
+		var tool: Dictionary = TOOLS[i]
+		var key := "X" if tool.id == "demolish" else str(shown.find(i) + 1)
+		tool_buttons[i].text = "%s  %s" % [key, tool.name] if tool.cost == 0 else "%s  %s  %s" % [key, tool.name, _money(tool.cost)]
+		tool_buttons[i].visible = shown.has(i)
+	_select_tool(shown[0])
+
+
 func _select_tool(i: int) -> void:
 	tool_index = i
 	dragging = false
@@ -562,7 +599,8 @@ func _process(delta: float) -> void:
 		paint_tiles[_cursor()] = true
 	_update_staff(delta * maxf(speed, 0.0))
 	for bld in buildings:  # roofs fade out while the mouse is inside the building
-		bld.alpha = move_toward(bld.alpha, 0.0 if bld.tiles.has(hover) else 1.0, delta * 5.0)
+		var hide: bool = view_level == 0 and bld.tiles.has(hover)
+		bld.alpha = move_toward(bld.alpha, 0.0 if hide else 1.0, delta * 5.0)
 	_update_hud()
 	_update_cost_label()
 	queue_redraw()
@@ -584,8 +622,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if modal:
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode >= KEY_1 and event.keycode < KEY_1 + TOOLS.size() - 1:
-			_select_tool(event.keycode - KEY_1)
+		var shown := _level_tools()
+		if event.keycode >= KEY_1 and event.keycode < KEY_1 + shown.size() - 1:
+			_select_tool(shown[event.keycode - KEY_1])
+		elif event.keycode == KEY_R:
+			_toggle_level()
 		elif event.keycode == KEY_X:
 			_select_tool(TOOLS.size() - 1)
 		elif event.keycode == KEY_SPACE:
@@ -629,7 +670,8 @@ func _zoom(factor: float) -> void:
 # --- Building ---------------------------------------------------------------
 
 func _mouse_tile() -> Vector2i:
-	return Vector2i((get_global_mouse_position() / TILE).floor())
+	var lift := Vector2(0, WALL_H) if view_level == 1 else Vector2.ZERO  # roofs are drawn raised
+	return Vector2i(((get_global_mouse_position() + lift) / TILE).floor())
 
 
 func _in_bounds(t: Vector2i) -> bool:
@@ -694,7 +736,11 @@ func _can_place(id: String, t: Vector2i) -> bool:
 			return not wall_tiles.has(t) and not objects.has(t) and _subs_in(t).is_empty()
 		"door":
 			return wall_tiles.get(t) != "door" and not objects.has(t) and _subs_in(t).is_empty()
+		"solar", "ac":
+			return _roofed(t) and not roof_objects.has(t)
 		"demolish":
+			if view_level == 1:
+				return roof_objects.has(t)
 			return objects.has(t) or wall_tiles.has(t) or floor_tiles.has(t) or not _subs_in(t).is_empty()
 	# furniture
 	return floor_tiles.has(t) and not wall_tiles.has(t) and not objects.has(t) and _subs_in(t).is_empty()
@@ -728,12 +774,18 @@ func _commit(tiles: Array) -> void:
 			"wall": wall_tiles[t] = tool.id
 			"object": objects[t] = tool.id
 			"sub": sub_objects[t] = tool.id
+			"roof": roof_objects[t] = tool.id
 	_after_build()
 
 
 func _demolish(t: Vector2i) -> void:
 	# Removes the top-most thing on a tile and refunds half its price.
 	# Small subgrid items go first, all of the tile's at once.
+	if view_level == 1:
+		if roof_objects.has(t):
+			money += int(_tool_by_id(roof_objects[t]).cost / 2)
+			roof_objects.erase(t)
+		return
 	var subs := _subs_in(t)
 	if not subs.is_empty():
 		for c in subs:
@@ -751,7 +803,8 @@ func _daily_burn() -> int:
 	var payroll := 0
 	for s in staff:
 		payroll += s.salary
-	return payroll + _racks() * RACK_POWER_PER_DAY
+	var solar := roof_objects.values().count("solar") * SOLAR_SAVING
+	return payroll + maxi(_racks() * RACK_POWER_PER_DAY - solar, 0)
 
 
 # --- Models, users and rivals ------------------------------------------------
@@ -1124,6 +1177,17 @@ func _find_buildings() -> void:
 				if o.tiles.has(start):
 					alpha = o.alpha
 			buildings.append({"tiles": tiles, "alpha": alpha})
+	for t in roof_objects.keys():  # the roof came down, and so did whatever was on it
+		if not _roofed(t):
+			money += int(_tool_by_id(roof_objects[t]).cost / 2)
+			roof_objects.erase(t)
+
+
+func _roofed(t: Vector2i) -> bool:
+	for bld in buildings:
+		if bld.tiles.has(t):
+			return true
+	return false
 
 
 func _draw_roof(bld: Dictionary) -> void:
@@ -1133,11 +1197,9 @@ func _draw_roof(bld: Dictionary) -> void:
 	var lift := Vector2(0, WALL_H)  # the roof sits on top of the walls
 	var fill := Color(0.56, 0.5, 0.45, a)
 	var edge := Color(0.32, 0.28, 0.26, a)
-	var sum := Vector2.ZERO
 	for t in bld.tiles:
 		var p := Vector2(t) * TILE - lift
 		draw_rect(Rect2(p, Vector2(TILE, TILE)), fill.lightened(0.04) if (t.x + t.y) % 2 == 0 else fill)
-		sum += Vector2(t)
 	for t in bld.tiles:
 		var p := Vector2(t) * TILE - lift
 		if not bld.tiles.has(t + Vector2i.UP): draw_line(p, p + Vector2(TILE, 0), edge, 3.0)
@@ -1146,10 +1208,28 @@ func _draw_roof(bld: Dictionary) -> void:
 		if not bld.tiles.has(t + Vector2i.DOWN):
 			draw_line(p + Vector2(0, TILE), p + Vector2(TILE, TILE), edge, 3.0)
 			draw_rect(Rect2(p + Vector2(0, TILE), Vector2(TILE, WALL_H)), Color(0.3, 0.29, 0.32, a))  # wall front below the eaves
-	# A rooftop AC unit, because it's Calizona.
-	var c: Vector2 = (sum / bld.tiles.size() + Vector2(0.5, 0.5)) * TILE - lift
-	draw_rect(Rect2(c - Vector2(14, 10), Vector2(28, 20)), Color(0.75, 0.75, 0.72, a))
-	draw_circle(c, 7, Color(0.35, 0.35, 0.38, a))
+			if wall_tiles.get(t) == "door":  # keep doors visible from outside
+				draw_rect(Rect2(p + Vector2(6, TILE + 4), Vector2(TILE - 12, WALL_H - 4)), Color(0.62, 0.43, 0.25, a))
+				draw_circle(p + Vector2(TILE - 10, TILE + WALL_H * 0.6), 1.5, Color(0.9, 0.8, 0.4, a))
+		elif wall_tiles.get(t) == "door":  # side or back door: mark it on the roof edge
+			draw_rect(Rect2(p + Vector2(8, 8), Vector2(TILE - 16, TILE - 16)), Color(0.62, 0.43, 0.25, a))
+	for t in bld.tiles:
+		if roof_objects.has(t):
+			call("_draw_roof_" + roof_objects[t], Vector2(t) * TILE - lift, a)
+
+
+func _draw_roof_solar(p: Vector2, a: float) -> void:
+	draw_rect(Rect2(p + Vector2(2, 4), Vector2(28, 24)), Color(0.75, 0.75, 0.78, a))
+	draw_rect(Rect2(p + Vector2(4, 6), Vector2(24, 20)), Color(0.15, 0.25, 0.5, a))
+	for k in 3:
+		draw_line(p + Vector2(4 + 8 * k, 6), p + Vector2(4 + 8 * k, 26), Color(0.4, 0.55, 0.85, a))
+	draw_line(p + Vector2(4, 16), p + Vector2(28, 16), Color(0.4, 0.55, 0.85, a))
+
+
+func _draw_roof_ac(p: Vector2, a: float) -> void:  # because it's Calizona
+	draw_rect(Rect2(p + Vector2(3, 10), Vector2(26, 18)), Color(0.55, 0.55, 0.52, a))
+	draw_rect(Rect2(p + Vector2(3, 2), Vector2(26, 10)), Color(0.78, 0.78, 0.75, a))
+	draw_circle(p + Vector2(16, 7), 4, Color(0.35, 0.35, 0.38, a))
 
 
 # --- Drawing ----------------------------------------------------------------
@@ -1363,6 +1443,8 @@ func _draw_preview() -> void:
 	var tool: Dictionary = TOOLS[tool_index]
 	var size := SUB if _is_sub_tool() else TILE
 	var tiles: Array = _drag_tiles() if dragging else [_cursor()]
+	if view_level == 1:
+		draw_set_transform(Vector2(0, -WALL_H))
 	for t in tiles:
 		var ok := _can_place(tool.id, t)
 		var c := Color(1, 0.3, 0.3, 0.35) if tool.id == "demolish" or not ok else Color(0.4, 1, 0.5, 0.35)
@@ -1370,3 +1452,4 @@ func _draw_preview() -> void:
 			c = Color(1, 1, 1, 0.15)
 		draw_rect(Rect2(Vector2(t) * size, Vector2(size, size)), c)
 	draw_rect(Rect2(Vector2(_cursor()) * size, Vector2(size, size)), Color(1, 1, 1, 0.8), false, 2.0)
+	draw_set_transform(Vector2.ZERO)
