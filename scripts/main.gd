@@ -15,8 +15,28 @@ const START_YEAR := 2027
 const FOUNDER_SALARY := 1200  # the founders took equity instead (the fools)
 const RECRUITER_FEE := 5000
 const SEVERANCE_DAYS := 5
-const RACK_POWER_PER_DAY := 400
-const SOLAR_SAVING := 60  # each rooftop solar panel knocks this off the rack power bill
+# Power. Everything that draws power asks for kW; sources supply it 8 times a day (3 hours a step).
+# Cheapest sources run first: sun, then the grid, then batteries, then generators by fuel price.
+# Short on power? Racks and coolers all run at the fraction that's covered.
+const RACK_KW := 6.0
+const SOLAR_KW := 2.0  # a rooftop Solar Panel at noon
+const SUN := [0.0, 0.0, 0.5, 1.0, 1.0, 0.5, 0.0, 0.0]  # by step of the day, midnight first
+const HOURS_PER_STEP := 3.0
+# Generators sit outside. fuel: $ per kWh made. smog: pollution per kWh, puffed out on their tile.
+# New fuel tiers (and later wind, nuclear, fusion) go here plus a TOOLS entry and a _draw_ function.
+const GENERATORS := {
+	"gen_portable": {"kw": 20.0, "fuel": 2.75, "smog": 0.05},
+	"gen_diesel": {"kw": 60.0, "fuel": 2.0, "smog": 0.05},
+	"gen_large": {"kw": 200.0, "fuel": 1.4, "smog": 0.045},
+	"power_plant": {"kw": 800.0, "fuel": 0.9, "smog": 0.025},  # trailer gas turbines, as real datacenters do
+}
+const GRID_KW := 40.0  # the utility's cap; lobbying for more comes later
+const GRID_PRICE := 1.2  # $ per kWh. Its smog lands in someone else's zip code
+const BATTERY_KWH := 200.0
+const BATTERY_KW := 50.0
+# Pollution drifts to neighbouring tiles each step and slowly clears.
+const SMOG_SPREAD := 0.5
+const SMOG_DECAY := 0.015
 # Heat. Each room (building) has one temperature in Fahrenheit (this is America, bro).
 # Racks heat their room, bigger rooms take longer to heat, and a building only leaks a
 # little back toward room temperature, so an uncooled server room keeps getting hotter.
@@ -32,11 +52,11 @@ const RACK_MIN_OUTPUT := 0.2
 const COMFORT_TEMP := 76.0  # staff slow down above this
 const HEAT_PRODUCTIVITY_LOSS := 0.02  # productivity lost per degree over, down to 20%
 # Cooling equipment on the roof. Each removes `cooling` heat a step (same units as RACK_HEAT)
-# from the room below, never below `target`, and costs `power` a day.
+# from the room below, never below `target`, and draws `power` kW.
 # The AC is the starter: it cancels out less than 2 racks and costs most of a rack's power bill.
 # New coolers (chillers, heat pumps, water cooling) go here.
 const COOLERS := {
-	"ac": {"name": "AC Unit", "cooling": 21.0, "target": 64.0, "power": 300},
+	"ac": {"name": "AC Unit", "cooling": 21.0, "target": 64.0, "power": 4.0},  # power in kW
 }
 const REVENUE_PER_USER := 0.05  # dollars per user per day
 const WIN_CAPABILITY := 100
@@ -100,6 +120,12 @@ const TOOLS := [
 	{"id": "coffee", "name": "Coffee Maker", "layer": "sub", "cost": 1500, "drag": "paint"},
 	{"id": "solar", "name": "Solar Panel", "layer": "roof", "cost": 8000, "drag": "paint"},
 	{"id": "ac", "name": "AC Unit", "layer": "roof", "cost": 3000, "drag": "paint"},
+	{"id": "gen_portable", "name": "Portable Generator", "layer": "object", "cost": 2500, "drag": "paint", "menu": "power"},
+	{"id": "gen_diesel", "name": "Diesel Generator", "layer": "object", "cost": 25000, "drag": "paint", "menu": "power"},
+	{"id": "gen_large", "name": "Large Diesel", "layer": "object", "cost": 90000, "drag": "paint", "menu": "power"},
+	{"id": "power_plant", "name": "Portable Power Plant", "layer": "object", "cost": 600000, "drag": "paint", "menu": "power"},
+	{"id": "battery", "name": "Battery", "layer": "object", "cost": 30000, "drag": "paint", "menu": "power"},
+	{"id": "grid", "name": "Grid Hookup", "layer": "object", "cost": 50000, "drag": "single", "menu": "power"},
 	{"id": "demolish", "name": "Demolish", "layer": "", "cost": 0, "drag": "fill"},
 ]
 
@@ -119,6 +145,8 @@ const CHET_TIPS := [
 	"Every door is an open door policy if you think about it.",
 	"Racks run hot, bro. Hot racks throttle, hot people sweat. Heat (H) shows where it's cooking.",
 	"AC Units turn money into cold. Very inefficiently. It's Calizona, we don't have a choice.",
+	"Power (P) is where the electrons come from. Diesel is cheap to buy and expensive to run. Like me.",
+	"Generators puff smog. It drifts. Technically that's the neighbours' air now.",
 ]
 
 var floor_tiles := {}  # Vector2i -> "carpet" / "concrete"
@@ -186,6 +214,7 @@ const MENUS := [
 	{"id": "staff", "name": "Staff", "key": KEY_T, "tab": 1},
 	{"id": "board", "name": "Board", "key": KEY_O, "tab": 2},
 	{"id": "heat", "name": "Heat", "key": KEY_H, "tab": 3},
+	{"id": "power", "name": "Power", "key": KEY_P, "tab": 4},  # also opens the build bar with power tools
 ]
 var models_label: Label
 var train_label: Label
@@ -198,6 +227,19 @@ var board_bar: ProgressBar
 var board_target_label: Label
 var board_members_label: Label
 var heat_label: Label
+var power_label: Label
+var build_menu := "build"  # which tools the build bar shows: "build" or "power"
+var power_ratio := 1.0  # share of demand covered last step
+var power_bill := 0  # yesterday's fuel and grid bill
+var _power_cost := 0.0  # today's so far
+var _power_step := 0  # step of the day, 0 = midnight
+var _power_warned := false
+var _smog_warned := false
+var battery_charge := 0.0  # kWh, shared by all batteries
+var power_stats := {}  # last step: demand, solar, grid, battery, gens (kW)
+var gen_output := {}  # Vector2i -> kW a generator made last step
+var smog := PackedFloat32Array()  # pollution per tile, GRID_W * GRID_H
+var smog_today := 0.0
 var modal: Control  # the open pop-up, if any; the game pauses under it
 var modal_button: Button
 var _speed_before_modal := 1
@@ -205,6 +247,7 @@ var _speed_before_modal := 1
 
 func _ready() -> void:
 	rng.seed = 42
+	smog.resize(GRID_W * GRID_H)
 	_build_starter_office()
 	astar.region = Rect2i(0, 0, GRID_W, GRID_H)
 	astar.cell_size = Vector2(TILE, TILE)
@@ -213,6 +256,7 @@ func _ready() -> void:
 	astar.update()
 	_refresh_walkable()
 	_find_buildings()
+	power_bill = int(_power_demand() * 24.0 * GENERATORS.gen_portable.fuel)  # a first guess until day 1's bill is in
 	_add_staff("researcher", _tile_center(Vector2i(27, 22)), FOUNDER_SALARY)
 	_add_staff("engineer", _tile_center(Vector2i(28, 22)), FOUNDER_SALARY)
 
@@ -245,6 +289,7 @@ func _build_starter_office() -> void:
 	objects[Vector2i(34, 20)] = "rack"
 	objects[Vector2i(25, 25)] = "ficus"
 	roof_objects[Vector2i(30, 21)] = "ac"
+	objects[Vector2i(37, 24)] = "gen_portable"  # round the side, humming
 
 
 # --- UI ---------------------------------------------------------------------
@@ -339,6 +384,7 @@ func _build_ui() -> void:
 	_build_staff_tab()
 	_build_board_tab()
 	_build_heat_tab()
+	_build_power_tab()
 
 	cost_label = Label.new()
 	cost_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -528,12 +574,40 @@ func _update_heat_tab() -> void:
 	for t in roof_objects:
 		if COOLERS.has(roof_objects[t]):
 			cool_power += COOLERS[roof_objects[t]].power
-	heat_label.text = ("Rooms:\n%s\n\nRack compute lost to heat: %.1f of %d\nStaff productivity: %d%%\nCooling power: %s/day\n\n"
+	heat_label.text = ("Rooms:\n%s\n\nRack compute lost to heat: %.1f of %d\nStaff productivity: %d%%\nCooling power: %d kW\n\n"
 		+ "Racks heat their room. Racks throttle above %d°F, staff slow down above %d°F. "
 		+ "Put AC Units on the room's roof (R in Build). Each one cancels out a bit under 2 racks. Bigger rooms heat up slower.\n\n"
 		+ "Rooms are tinted by temperature while this panel is open.") % [
 		"\n".join(lines) if not lines.is_empty() else "none", _racks() - _rack_compute(), _racks(), int(prod * 100.0),
-		_money(cool_power), RACK_SAFE_TEMP, COMFORT_TEMP]
+		cool_power, RACK_SAFE_TEMP, COMFORT_TEMP]
+
+
+func _build_power_tab() -> void:
+	var box := _tab_box("Power")
+	power_label = _wrap_label(box)
+
+
+func _update_power_tab() -> void:
+	var st := power_stats
+	if st.is_empty():
+		return
+	var gens := {}
+	for t in objects:
+		if GENERATORS.has(objects[t]):
+			var n: String = _tool_by_id(objects[t]).name
+			gens[n] = gens.get(n, 0) + 1
+	var gen_lines := []
+	for n in gens:
+		gen_lines.append("%d x %s" % [gens[n], n])
+	var bats := objects.values().count("battery")
+	power_label.text = ("Demand: %d kW   Covered: %d%%\n%s\n\nSolar: %d kW (%d panels)\nGrid: %s\nBatteries: %s\nGenerators: %d kW\n%s\n\n"
+		+ "Power bill yesterday: %s\nSmog made today: %d\n\n"
+		+ "Cheapest power runs first: sun, grid, batteries, then generators by fuel price. Fuel generators go outside and their smog drifts across the map (tinted brown here). "
+		+ "Batteries store spare solar for the night. One grid hookup, capped at %d kW until you lobby for more. Solar Panels go on roofs (Build, R).") % [
+		st.demand, int(power_ratio * 100.0), "Daytime" if SUN[_power_step] > 0.0 else "Night", st.solar, roof_objects.values().count("solar"),
+		("%d of %d kW" % [st.grid, GRID_KW]) if objects.values().has("grid") else "not connected",
+		("%d, %d of %d kWh" % [bats, battery_charge, bats * BATTERY_KWH]) if bats > 0 else "none",
+		st.gens, "\n".join(gen_lines) if not gen_lines.is_empty() else "none", _money(power_bill), smog_today, GRID_KW]
 
 
 # A centered pop-up that pauses the game until its button is pressed.
@@ -601,13 +675,23 @@ func _tool_level(tool: Dictionary) -> int:
 func _level_tools() -> Array:
 	var out := []
 	for i in TOOLS.size():
-		if TOOLS[i].id == "demolish" or _tool_level(TOOLS[i]) == view_level:
+		if TOOLS[i].id == "demolish":
+			continue
+		if TOOLS[i].get("menu", "build") == build_menu and (build_menu == "power" or _tool_level(TOOLS[i]) == view_level):
 			out.append(i)
+	out.append(TOOLS.size() - 1)
 	return out
 
 
 func _toggle_level() -> void:
+	if build_menu == "power":  # power tools are all on the ground
+		return
 	view_level = (view_level + 1) % LEVELS.size()
+	_label_tools()
+
+
+func _label_tools() -> void:
+	level_button.visible = build_menu == "build"
 	level_button.text = "R  View: %s" % LEVELS[view_level]
 	var shown := _level_tools()
 	for i in TOOLS.size():
@@ -620,18 +704,30 @@ func _toggle_level() -> void:
 
 # Build toggles the build bar; the other menus share the side panel, one at a time.
 func _toggle_menu(id: String) -> void:
-	if id == "build":
-		build_row.visible = not build_row.visible
+	if id == "build" or id == "power":
 		dragging = false
 		paint_tiles.clear()
+	if id == "build":
+		build_row.visible = not build_row.visible or build_menu != "build"
+		if build_menu != "build":
+			build_menu = "build"
+			_label_tools()
+		if side_panel.visible and tabs.current_tab == 4:
+			side_panel.visible = false
 	else:
 		var m: Dictionary = MENUS.filter(func(x): return x.id == id)[0]
 		var reopen: bool = not side_panel.visible or tabs.current_tab != m.tab
 		side_panel.visible = reopen
 		if reopen:
 			tabs.current_tab = m.tab
+		if id == "power" or build_menu == "power":  # the power panel brings its own tools
+			build_menu = "power" if reopen and id == "power" else "build"
+			build_row.visible = build_menu == "power"
+			if build_menu == "power" and view_level != 0:
+				view_level = 0
+			_label_tools()
 	for m in MENUS:
-		var open: bool = build_row.visible if m.id == "build" else side_panel.visible and tabs.current_tab == m.get("tab", -1)
+		var open: bool = (build_row.visible and build_menu == "build") if m.id == "build" else side_panel.visible and tabs.current_tab == m.get("tab", -1)
 		menu_buttons[m.id].button_pressed = open
 
 
@@ -663,6 +759,7 @@ func _update_hud() -> void:
 	_update_staff_tab()
 	_update_board_tab()
 	_update_heat_tab()
+	_update_power_tab()
 
 
 func _num(v: int) -> String:
@@ -698,6 +795,7 @@ func _process(delta: float) -> void:
 	_heat_timer += delta * speed
 	while _heat_timer >= SECONDS_PER_DAY / HEAT_STEPS_PER_DAY and not modal and not game_over:
 		_heat_timer -= SECONDS_PER_DAY / HEAT_STEPS_PER_DAY
+		_tick_power()
 		_tick_heat()
 	_tip_timer += delta
 	if _tip_timer > 15.0:
@@ -855,6 +953,12 @@ func _can_place(id: String, t: Vector2i) -> bool:
 			return wall_tiles.get(t) != "door" and not objects.has(t) and _subs_in(t).is_empty()
 		"solar", "ac":
 			return _roofed(t) and not roof_objects.has(t)
+		"gen_portable", "gen_diesel", "gen_large", "power_plant", "grid":  # outdoors only, bro. Fumes.
+			if id == "grid" and objects.values().has("grid"):
+				return false
+			return not _roofed(t) and not objects.has(t) and _subs_in(t).is_empty()
+		"battery":
+			return not wall_tiles.has(t) and not objects.has(t) and _subs_in(t).is_empty()
 		"demolish":
 			if view_level == 1:
 				return roof_objects.has(t)
@@ -916,23 +1020,25 @@ func _demolish(t: Vector2i) -> void:
 			return
 
 
-func _daily_burn() -> int:
+func _payroll() -> int:
 	var payroll := 0
 	for s in staff:
 		payroll += s.salary
-	var power := _racks() * RACK_POWER_PER_DAY
-	for t in roof_objects:
-		if COOLERS.has(roof_objects[t]):
-			power += COOLERS[roof_objects[t]].power
-	var solar := roof_objects.values().count("solar") * SOLAR_SAVING
-	return payroll + maxi(power - solar, 0)
+	return payroll
+
+
+# Payroll plus yesterday's power bill (the bill itself is paid as it's run up, see _new_day).
+func _daily_burn() -> int:
+	return _payroll() + power_bill
 
 
 # --- Models, users and rivals ------------------------------------------------
 
 func _new_day() -> void:
 	day += 1
-	money -= _daily_burn()
+	power_bill = int(_power_cost)
+	_power_cost = 0.0
+	money -= _payroll() + power_bill
 	_tick_training()
 	_tick_users()
 	_tick_rivals()
@@ -966,7 +1072,7 @@ func _rack_compute() -> float:
 
 
 func _rack_output(t: Vector2i) -> float:
-	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0)
+	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * power_ratio
 
 
 # Researchers make every unit of compute count for more.
@@ -1258,6 +1364,100 @@ func _update_staff(delta: float) -> void:
 			s.path.remove_at(0)
 
 
+# --- Power and pollution ----------------------------------------------------
+
+func _power_demand() -> float:
+	var kw := _racks() * RACK_KW
+	for t in roof_objects:
+		if COOLERS.has(roof_objects[t]):
+			kw += COOLERS[roof_objects[t]].power
+	return kw
+
+
+func _tick_power() -> void:
+	_power_step = (_power_step + 1) % SUN.size()
+	var demand := _power_demand()
+	var need := demand
+	var h := HOURS_PER_STEP
+	var solar: float = roof_objects.values().count("solar") * SOLAR_KW * SUN[_power_step]
+	var used_solar := minf(solar, need)
+	need -= used_solar
+	var bat_cap := objects.values().count("battery") * BATTERY_KWH
+	var bat_rate := objects.values().count("battery") * BATTERY_KW
+	battery_charge = minf(battery_charge + minf(solar - used_solar, bat_rate) * h, bat_cap)
+	var grid := 0.0
+	if objects.values().has("grid"):
+		grid = minf(need, GRID_KW)
+		need -= grid
+		_power_cost += grid * h * GRID_PRICE
+	var from_bat := minf(need, minf(bat_rate, battery_charge / h))
+	battery_charge -= from_bat * h
+	need -= from_bat
+	var gens := []
+	for t in objects:
+		if GENERATORS.has(objects[t]):
+			gens.append(t)
+	gens.sort_custom(func(x, y): return GENERATORS[objects[x]].fuel < GENERATORS[objects[y]].fuel)
+	gen_output.clear()
+	var made := 0.0
+	for t in gens:
+		var g: Dictionary = GENERATORS[objects[t]]
+		var out := minf(need, g.kw)
+		need -= out
+		made += out
+		gen_output[t] = out
+		_power_cost += out * h * g.fuel
+		smog[t.y * GRID_W + t.x] += out * h * g.smog
+		smog_today += out * h * g.smog
+	power_ratio = 1.0 if demand <= 0.0 else clampf(1.0 - need / demand, 0.0, 1.0)
+	power_stats = {"demand": demand, "solar": used_solar, "grid": grid, "battery": from_bat, "gens": made}
+	if _power_step == 0:
+		smog_today = 0.0
+	_spread_smog()
+	if power_ratio < 0.99 and not _power_warned:
+		_power_warned = true
+		_chet("Bro, we're browning out. Racks and ACs are running at %d%%. Build more generators under Power (P)." % int(power_ratio * 100.0))
+	elif power_ratio >= 0.99:
+		_power_warned = false
+	if not _smog_warned and smog_today > 150.0:
+		_smog_warned = true
+		_chet("The generators are making their own weather now. Smog drifts, bro. Power (P) shows where it's going.")
+
+
+func _spread_smog() -> void:
+	# Each tile keeps part of its smog and shares the rest with its four neighbours; the edges leak away.
+	var next := PackedFloat32Array()
+	next.resize(smog.size())
+	for y in GRID_H:
+		for x in GRID_W:
+			var v := smog[y * GRID_W + x]
+			if v < 0.001:
+				continue
+			v *= 1.0 - SMOG_DECAY
+			var share := v * SMOG_SPREAD / 4.0
+			next[y * GRID_W + x] += v - share * 4.0
+			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var n: Vector2i = Vector2i(x, y) + d
+				if _in_bounds(n):
+					next[n.y * GRID_W + n.x] += share
+	smog = next
+
+
+func _smog_at(t: Vector2i) -> float:
+	return smog[t.y * GRID_W + t.x] if _in_bounds(t) else 0.0
+
+
+func _draw_smog(a: Vector2i, b: Vector2i) -> void:
+	# A faint haze always; a stronger brown tint while the Power panel is open.
+	var strength := 1.0 if side_panel.visible and tabs.current_tab == 4 else 0.35
+	for x in range(a.x, b.x):
+		for y in range(a.y, b.y):
+			var v := _smog_at(Vector2i(x, y))
+			if v > 0.05:
+				draw_rect(Rect2(Vector2(x, y) * TILE, Vector2(TILE, TILE)),
+					Color(0.35, 0.28, 0.2, clampf(v / 10.0, 0.0, 0.7) * strength))
+
+
 # --- Heat -------------------------------------------------------------------
 
 func _temp(t: Vector2i) -> float:
@@ -1274,10 +1474,10 @@ func _tick_heat() -> void:
 	added.fill(0.0)
 	for t in objects:
 		if objects[t] == "rack" and room_of.has(t):
-			added[room_of[t]] += RACK_HEAT
+			added[room_of[t]] += RACK_HEAT * power_ratio
 	for t in roof_objects:
 		if COOLERS.has(roof_objects[t]) and room_of.has(t):
-			added[room_of[t]] -= COOLERS[roof_objects[t]].cooling
+			added[room_of[t]] -= COOLERS[roof_objects[t]].cooling * power_ratio
 	for i in buildings.size():
 		var bld: Dictionary = buildings[i]
 		var v: float = bld.temp + added[i] / maxi(bld.area, 1)
@@ -1495,6 +1695,7 @@ func _draw() -> void:
 
 	if _heat_view():
 		_draw_heat_tint()  # on the floor, under walls and furniture
+	_draw_smog(a, b)
 
 	# Three-quarter view: things have height and are drawn back-to-front, row by row,
 	# so anything further south overlaps what's behind it.
@@ -1625,6 +1826,53 @@ func _draw_ficus(p: Vector2, _t: Vector2i) -> void:
 	for o in [Vector2(-7, 0), Vector2(6, -2), Vector2(0, -8), Vector2(-4, -14), Vector2(5, -12), Vector2(0, -2)]:
 		draw_circle(p + Vector2(16, 6) + o, 6, Color(0.22, 0.5, 0.25))
 	draw_circle(p + Vector2(18, -6), 4, Color(0.32, 0.62, 0.32))
+
+
+func _draw_gen_body(p: Vector2, t: Vector2i, w: float, h: float, col: Color) -> void:
+	_ellipse(p + Vector2(16, 28), w / 2 + 2, 4, Color(0, 0, 0, 0.25))
+	_box(Rect2(p + Vector2(16 - w / 2, 28 - h), Vector2(w, h)), h * 0.6, col.lightened(0.15), col.darkened(0.3))
+	if gen_output.get(t, 0.0) > 0.0:  # running: a puff of exhaust drifts up
+		var k := fmod(_time * 0.8 + t.x * 0.37, 1.0)
+		draw_circle(p + Vector2(16 + w / 2 - 4, 28 - h * 1.6 - 10 * k), 3 + 4 * k, Color(0.3, 0.3, 0.3, 0.5 * (1.0 - k)))
+
+
+func _draw_gen_portable(p: Vector2, t: Vector2i) -> void:
+	_draw_gen_body(p, t, 18, 12, Color(0.85, 0.65, 0.15))
+	draw_rect(Rect2(p + Vector2(9, 8), Vector2(14, 2)), Color(0.15, 0.15, 0.15))  # handle
+
+
+func _draw_gen_diesel(p: Vector2, t: Vector2i) -> void:
+	_draw_gen_body(p, t, 26, 16, Color(0.25, 0.45, 0.3))
+
+
+func _draw_gen_large(p: Vector2, t: Vector2i) -> void:
+	_draw_gen_body(p, t, 30, 22, Color(0.75, 0.75, 0.72))
+	draw_rect(Rect2(p + Vector2(23, -10), Vector2(4, 10)), Color(0.2, 0.2, 0.2))  # exhaust stack
+
+
+func _draw_power_plant(p: Vector2, t: Vector2i) -> void:
+	draw_rect(Rect2(p + Vector2(1, 26), Vector2(30, 4)), Color(0.15, 0.15, 0.15))  # trailer bed
+	_draw_gen_body(p, t, 30, 18, Color(0.9, 0.9, 0.92))
+	for k in 2:
+		draw_rect(Rect2(p + Vector2(6 + 14 * k, -12), Vector2(6, 12)), Color(0.55, 0.55, 0.58))  # turbine stacks
+
+
+func _draw_battery(p: Vector2, _t: Vector2i) -> void:
+	_ellipse(p + Vector2(16, 28), 13, 4, Color(0, 0, 0, 0.2))
+	_box(Rect2(p + Vector2(4, 12), Vector2(24, 16)), 10, Color(0.9, 0.9, 0.9), Color(0.6, 0.6, 0.62))
+	var cap := objects.values().count("battery") * BATTERY_KWH
+	var f := battery_charge / cap if cap > 0.0 else 0.0
+	draw_rect(Rect2(p + Vector2(8, 18), Vector2(16, 4)), Color(0.2, 0.2, 0.2))
+	draw_rect(Rect2(p + Vector2(8, 18), Vector2(16 * f, 4)), Color(0.3, 0.9, 0.4))
+
+
+func _draw_grid(p: Vector2, _t: Vector2i) -> void:
+	_ellipse(p + Vector2(16, 28), 6, 3, Color(0, 0, 0, 0.25))
+	draw_rect(Rect2(p + Vector2(14, -22), Vector2(4, 50)), Color(0.45, 0.32, 0.2))  # utility pole
+	draw_rect(Rect2(p + Vector2(4, -18), Vector2(24, 3)), Color(0.45, 0.32, 0.2))
+	draw_rect(Rect2(p + Vector2(18, -10), Vector2(8, 10)), Color(0.5, 0.5, 0.52))  # transformer can
+	for x in [5, 26]:
+		draw_circle(p + Vector2(x, -19), 1.5, Color(0.6, 0.8, 0.9))
 
 
 func _draw_coffee(p: Vector2) -> void:

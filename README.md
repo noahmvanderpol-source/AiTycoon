@@ -37,3 +37,19 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 - **Fired** if Board Confidence hits 0% or your money goes below $0.
 - **You win?** when a model reaches capability 100 and replaces you as CEO.
 - The **Board** tab shows confidence, the current target, progress and days left.
+
+## Power
+- Racks draw 6 kW each and AC Units 4 kW. Everything is powered 8 times a day (3 hours a step).
+- **Power (P)** opens the power panel and the power build tools. You start with a Portable Generator outside the office.
+- Cheapest power runs first: rooftop Solar Panels (2 kW, daytime only), then one Grid Hookup (40 kW cap, $1.20/kWh), then Batteries (200 kWh, charged by spare solar), then generators by fuel price:
+
+| Generator | Output | Fuel | Smog |
+| --- | --- | --- | --- |
+| Portable Generator ($2,500) | 20 kW | $2.75/kWh | high |
+| Diesel Generator ($25,000) | 60 kW | $2.00/kWh | high |
+| Large Diesel ($90,000) | 200 kW | $1.40/kWh | high |
+| Portable Power Plant ($600,000) | 800 kW | $0.90/kWh | half |
+
+- Generators and the grid hookup go outdoors. Short on power, racks and ACs all run at the share that's covered (a brownout).
+- Generators puff smog onto their tile, and it drifts to neighbouring tiles and slowly clears. A faint haze shows always; the Power panel tints it brown.
+- Fuel and grid costs are added to the daily burn.
