@@ -321,6 +321,11 @@ var _time := 0.0
 
 var camera: Camera2D
 var top_label: Label
+var company_button: Button
+var company_page: Control
+var company_tabs: TabContainer
+var company_tab_buttons := []
+var company_title: Label
 var chet_label: Label
 var cost_label: Label
 var hover_tip: Label  # says what's under the mouse
@@ -335,17 +340,18 @@ var cat_buttons := {}  # build category id -> Button
 var menu_buttons := {}  # menu id -> Button
 
 # The menu row along the bottom. Panels open from here by click or hotkey; add new ones to this list.
-# "tab" is the index of the panel in the right-hand side panel; build opens the build bar instead.
+# "tab" is the index of the panel in the right-hand side panel; build opens the build bar and
+# board opens the Company page (also opened by clicking the company name in the top bar).
 const MENUS := [
 	{"id": "build", "name": "Build", "key": KEY_B},
 	{"id": "models", "name": "Models", "key": KEY_M, "tab": 0},
 	{"id": "staff", "name": "Staff", "key": KEY_T, "tab": 1},
-	{"id": "board", "name": "Board", "key": KEY_O, "tab": 2},
-	{"id": "heat", "name": "Heat", "key": KEY_H, "tab": 3},
-	{"id": "power", "name": "Power", "key": KEY_P, "tab": 4},
-	{"id": "deviation", "name": "Deviation", "key": KEY_V, "tab": 5},
-	{"id": "research", "name": "Research", "key": KEY_E, "tab": 7},
-	{"id": "guide", "name": "Guide", "key": KEY_G, "tab": 6},
+	{"id": "board", "name": "Board", "key": KEY_O},
+	{"id": "heat", "name": "Heat", "key": KEY_H, "tab": 2},
+	{"id": "power", "name": "Power", "key": KEY_P, "tab": 3},
+	{"id": "deviation", "name": "Deviation", "key": KEY_V, "tab": 4},
+	{"id": "research", "name": "Research", "key": KEY_E, "tab": 6},
+	{"id": "guide", "name": "Guide", "key": KEY_G, "tab": 5},
 ]
 var models_label: Label
 var train_label: Label
@@ -457,6 +463,14 @@ func _build_ui() -> void:
 	layer.add_child(top)
 	var top_row := HBoxContainer.new()
 	top.add_child(top_row)
+	company_button = Button.new()  # the company name; opens the Company page
+	company_button.flat = true
+	company_button.focus_mode = Control.FOCUS_NONE
+	company_button.tooltip_text = "Open the Company page"
+	company_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	company_button.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5))
+	company_button.pressed.connect(_toggle_company_page.bind(0))
+	top_row.add_child(company_button)
 	top_label = Label.new()
 	top_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_row.add_child(top_label)
@@ -538,12 +552,13 @@ func _build_ui() -> void:
 	side.add_child(tabs)
 	_build_models_tab()
 	_build_staff_tab()
-	_build_board_tab()
 	_build_heat_tab()
 	_build_power_tab()
 	_build_deviation_tab()
 	_build_guide_tab()
 	_build_research_tab()
+
+	_build_company_page(layer)
 
 	hover_tip = Label.new()
 	hover_tip.add_theme_font_size_override("font_size", 13)
@@ -568,7 +583,7 @@ const GUIDE := [
 	["Roofs and views (R)", "Every enclosed building gets a roof that hides while your mouse is inside it. R switches between Ground and Roof view. Rooftop items like AC Units and Solar Panels switch to Roof view by themselves when you pick them."],
 	["Models (M)", "Server Racks make compute. Pick a model size to train; bigger models take longer and raise capability more. Better models bring more users, and users bring revenue. Cutting corners trains faster but raises Deviation. Engineers at an Engineer's Workstation add compute for racks within its radius."],
 	["Staff (T)", "Hire researchers, engineers, marketers and alignment researchers, then give each a job. You don't control people directly: they need a free desk, or a spot at an Engineer's Workstation, for their job, and heat makes them slower."],
-	["Board (O)", "Each quarter the board sets a target. Hit it for +15 confidence, miss it for -25. At 0% you're fired, and running out of money gets you fired faster. Safety theater fools them for a while."],
+	["Board (O)", "Click your company name in the top bar (or press O) for the Company page. Its Board tab: each quarter the board sets a target. Hit it for +15 confidence, miss it for -25. At 0% you're fired, and running out of money gets you fired faster. Safety theater fools them for a while."],
 	["Heat (H)", "Racks heat the room they're in. Hot racks throttle and hot staff slow down. An AC Unit on the room's roof cancels out about 4 racks; a Window AC on a wall handles about one. Bigger rooms heat up slower. Rooms are tinted by temperature while the Heat panel is open."],
 	["Power (P)", "Racks, ACs and red-team rigs use power. The cheapest power runs first: solar, then the grid, then batteries, then generators by fuel price. Batteries store spare solar for the night. The grid hookup is capped until you lobby for more. Generators go outside, and their smog drifts across the map."],
 	["Deviation (V)", "Every rack adds Deviation, and training, cutting corners and smarter models raise the rate. Alignment researchers at desks and Red-Team Rigs bring it back down (rigs eat compute). At 25% the AI gets quirky, at 50% it sabotages rivals for you and scandals follow, at 75% it hides compute, lies on reports and staff quit. At 100% it takes over."],
@@ -860,17 +875,110 @@ func _update_staff_tab() -> void:
 		staff.size(), _money(payroll), _workforce("research"), _workforce("engineering"), _workforce("growth"), _workforce("alignment")]
 
 
+# The Company page: a mostly full-screen overlay with Board and Policies tabs.
+func _build_company_page(layer: CanvasLayer) -> void:
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.5)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.visible = false
+	layer.add_child(dim)
+	company_page = dim
+	var panel := PanelContainer.new()
+	var style := _panel_style(0.97)
+	style.set_content_margin_all(18)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	panel.offset_left = 60
+	panel.offset_right = -60
+	panel.offset_top = 64
+	panel.offset_bottom = -90
+	dim.add_child(panel)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	panel.add_child(col)
+	var head := HBoxContainer.new()
+	col.add_child(head)
+	company_title = Label.new()
+	company_title.add_theme_font_size_override("font_size", 24)
+	company_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(company_title)
+	for i in 2:
+		var b := Button.new()
+		b.text = ["Board", "Policies"][i]
+		b.toggle_mode = true
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size.x = 110
+		b.pressed.connect(_show_company_tab.bind(i))
+		head.add_child(b)
+		company_tab_buttons.append(b)
+	var close := Button.new()
+	close.text = "Close (Esc)"
+	close.focus_mode = Control.FOCUS_NONE
+	close.pressed.connect(func(): _set_company_page(false))
+	head.add_child(close)
+	col.add_child(HSeparator.new())
+	company_tabs = TabContainer.new()
+	company_tabs.tabs_visible = false
+	company_tabs.focus_mode = Control.FOCUS_NONE
+	company_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_child(company_tabs)
+	_build_board_tab()
+	_build_policies_tab()
+
+
+func _set_company_page(open: bool) -> void:
+	company_page.visible = open
+	_refresh_menu_buttons()
+
+
+func _show_company_tab(i: int) -> void:
+	company_tabs.current_tab = i
+	for j in company_tab_buttons.size():
+		company_tab_buttons[j].button_pressed = j == i
+	_set_company_page(true)
+
+
+# Opens the page on tab i, or closes it if it's already showing that tab.
+func _toggle_company_page(i: int) -> void:
+	if company_page.visible and company_tabs.current_tab == i:
+		_set_company_page(false)
+	else:
+		_show_company_tab(i)
+
+
+func _build_policies_tab() -> void:
+	var box := VBoxContainer.new()
+	box.name = "Policies"
+	company_tabs.add_child(box)
+	var l := _wrap_label(box)
+	l.add_theme_font_size_override("font_size", 16)
+	l.text = "No policies yet.\n\nThis is where you'll make company-wide decisions: return-to-office mandates, unlimited kombucha, \"move fast and break things\" as official policy.\n\nChet: Policies are like rules, but for other people. Coming soon, bro."
+
+
 func _build_board_tab() -> void:
-	var box := _tab_box("Board")
+	var cols := HBoxContainer.new()
+	cols.name = "Board"
+	cols.add_theme_constant_override("separation", 40)
+	company_tabs.add_child(cols)
+	var box := VBoxContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 8)
+	cols.add_child(box)
+	var right := VBoxContainer.new()
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cols.add_child(right)
 	board_label = _wrap_label(box)
+	board_label.add_theme_font_size_override("font_size", 18)
 	board_bar = ProgressBar.new()
 	board_bar.custom_minimum_size.y = 16
 	board_bar.show_percentage = false
+	board_bar.custom_minimum_size.y = 22
 	box.add_child(board_bar)
 	box.add_child(HSeparator.new())
 	board_target_label = _wrap_label(box)
-	box.add_child(HSeparator.new())
-	board_members_label = _wrap_label(box)
+	board_target_label.add_theme_font_size_override("font_size", 16)
+	board_members_label = _wrap_label(right)
+	board_members_label.add_theme_font_size_override("font_size", 16)
 
 
 func _update_board_tab() -> void:
@@ -1102,14 +1210,26 @@ func _toggle_menu(id: String) -> void:
 		build_row.visible = not build_row.visible
 		dragging = false
 		paint_tiles.clear()
+	elif id == "board":
+		_toggle_company_page(0)
+		return
 	else:
+		company_page.visible = false  # side panels open over the map, not under the Company page
 		var m: Dictionary = MENUS.filter(func(x): return x.id == id)[0]
 		var reopen: bool = not side_panel.visible or tabs.current_tab != m.tab
 		side_panel.visible = reopen
 		if reopen:
 			tabs.current_tab = m.tab
+	_refresh_menu_buttons()
+
+
+func _refresh_menu_buttons() -> void:
 	for m in MENUS:
-		var open: bool = build_row.visible if m.id == "build" else side_panel.visible and tabs.current_tab == m.get("tab", -1)
+		var open: bool = side_panel.visible and tabs.current_tab == m.get("tab", -1)
+		if m.id == "build":
+			open = build_row.visible
+		elif m.id == "board":
+			open = company_page.visible and company_tabs.current_tab == 0
 		menu_buttons[m.id].button_pressed = open
 
 
@@ -1137,8 +1257,10 @@ func _update_hud() -> void:
 	var q := (day - 1) / DAYS_PER_QUARTER
 	var burn := _daily_burn()
 	var revenue := "Revenue %s/day" % _money(revenue_today) if models.size() > 0 else "Revenue $0 (pre-revenue)"
-	top_label.text = "%s     %s     Burn %s/day     %s     Users %s     Compute %.1f     Deviation %d%%     Board %d%%     %s, Day %d" % [
-		company, _money(money), _money(burn), revenue, _num(int(users)), _compute_per_day(), int(deviation), confidence,
+	company_button.text = company
+	company_title.text = "%s, Calizona" % company
+	top_label.text = "%s     Burn %s/day     %s     Users %s     Compute %.1f     Deviation %d%%     Board %d%%     %s, Day %d" % [
+		_money(money), _money(burn), revenue, _num(int(users)), _compute_per_day(), int(deviation), confidence,
 		_quarter_name(q), (day - 1) % DAYS_PER_QUARTER + 1]
 	_update_models_tab()
 	_update_staff_tab()
@@ -1238,6 +1360,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_SPACE:
 			_set_speed(1 if speed == 0 else 0)
 		elif event.keycode == KEY_ESCAPE:
+			if company_page.visible:
+				_set_company_page(false)
 			dragging = false
 			paint_tiles.clear()
 	elif event is InputEventMouseMotion and panning:
@@ -2070,7 +2194,7 @@ func _smog_at(t: Vector2i) -> float:
 
 func _draw_smog(a: Vector2i, b: Vector2i) -> void:
 	# A faint haze always; a stronger brown tint while the Power panel is open.
-	var strength := 1.0 if side_panel.visible and tabs.current_tab == 4 else 0.35
+	var strength := 1.0 if side_panel.visible and tabs.current_tab == 3 else 0.35
 	for x in range(a.x, b.x):
 		for y in range(a.y, b.y):
 			var v := _smog_at(Vector2i(x, y))
@@ -2097,7 +2221,7 @@ func _coolers() -> Array:
 
 
 func _heat_view() -> bool:
-	return side_panel.visible and tabs.current_tab == 3
+	return side_panel.visible and tabs.current_tab == 2
 
 
 # Average insulation of a building's exterior walls (doors count as none).
@@ -2321,7 +2445,7 @@ func _hash(t: Vector2i, salt := 0) -> int:
 # --- Hover info ---------------------------------------------------------------
 
 func _update_hover_tip() -> void:
-	var text := "" if dragging or modal or _mouse_over_ui() else _describe_hover()
+	var text := "" if dragging or modal or company_page.visible or _mouse_over_ui() else _describe_hover()
 	if build_row.visible and not modal and not _mouse_over_ui():  # say why a generator won't fit here
 		var why := _ground_problem(TOOLS[tool_index].id, hover)
 		if why != "":

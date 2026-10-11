@@ -36,7 +36,7 @@ You start with a small office in the Calizona desert, $100,000 and two founders 
 - At the quarter's end there's a board meeting. Hit the target: +15 Board Confidence. Miss: -25 (-10 in the first quarter).
 - **Fired** if Board Confidence hits 0% or your money goes below $0.
 - **You win?** when a model reaches capability 100 and replaces you as CEO.
-- The **Board** tab shows confidence, the current target, progress and days left.
+- Click your **company name** in the top bar (or press **O**) to open the **Company page**. Its **Board** tab shows confidence, the current target, progress and days left. The **Policies** tab is a placeholder for company decisions coming later.
 
 ## Compute and Deviation
 - **Compute** (top bar) comes from racks (heat throttles them) and engineers. Red-Team Rigs eat some first; training gets the rest, sped up by researchers. The Models tab shows the breakdown.
