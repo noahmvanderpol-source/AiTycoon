@@ -39,7 +39,7 @@ const GENERATORS := {
 	"gen_large": {"kw": 200.0, "fuel": 1.4, "smog": 0.225, "size": Vector2i(3, 1)},
 	"power_plant": {"kw": 800.0, "fuel": 0.9, "smog": 0.125, "size": Vector2i(6, 2)},  # trailer gas turbines, as real datacenters do
 }
-const GRID_KW := 40.0  # the utility's cap; lobbying for more comes later
+const GRID_KW := 40.0  # the utility's cap; Grid Hookup Permits on the Government page raise it
 const GRID_PRICE := 1.2  # $ per kWh. Its smog lands in someone else's zip code
 const BATTERY_KWH := 200.0
 const BATTERY_KW := 50.0
@@ -403,6 +403,7 @@ const MENUS := [
 	{"id": "power", "name": "Power", "key": KEY_P, "tab": 3},
 	{"id": "deviation", "name": "Deviation", "key": KEY_V, "tab": 4},
 	{"id": "research", "name": "Research", "key": KEY_E},  # its own full-screen page, not a side tab
+	{"id": "government", "name": "Government", "key": KEY_L},  # full-screen lobbying page (government.gd)
 	{"id": "guide", "name": "Guide", "key": KEY_G, "tab": 5},
 ]
 var models_label: Label
@@ -442,6 +443,7 @@ var research_done := {}  # research id -> true
 var research_active := ""  # what the research points go towards
 var research_points := 0.0  # banked, spent when the active node is paid off
 var research_page: Control  # full-screen research tree
+var gov: CanvasLayer  # the Government page and lobbying (government.gd)
 var research_tree: Control  # holds the node buttons; draws the lines between them
 var research_label: Label
 var research_bar: ProgressBar
@@ -653,6 +655,9 @@ func _build_ui() -> void:
 	cost_label.visible = false
 	layer.add_child(cost_label)
 	_build_research_page()
+	gov = preload("res://scripts/government.gd").new()
+	gov.main = self
+	add_child(gov)
 	_chet(CHET_TIPS[0])
 
 
@@ -669,6 +674,7 @@ const GUIDE := [
 	["Power (P)", "Racks, ACs and red-team rigs use power. The cheapest power runs first: solar, then the grid, then batteries, then generators by fuel price. Batteries store spare solar for the night. The grid hookup is capped until you lobby for more. Generators go outside, and their smog drifts across the map."],
 	["Deviation (V)", "Every rack adds Deviation, and training, cutting corners and smarter models raise the rate. Alignment researchers at desks and Red-Team Rigs bring it back down (rigs eat compute). At 25% the AI gets quirky, at 50% it sabotages rivals for you and scandals follow, at 75% it hides compute, lies on reports and staff quit. At 100% it takes over."],
 	["Research (E)", "Researchers at desks make research points; the founders make a trickle on their own. Pick a project in each of four branches: Construction, Equipment, Computer Chips and Productivity. Each branch is researched in order. Projects unlock new things in Build or give a lasting bonus. Points keep banking while nothing is picked."],
+	["Government (L)", "Lobby the state of Calizona. Three politicians each have a price, a pet issue and a scandal meter. Donations raise their Favor but also their Scandal; at 100 Scandal they resign and the replacement starts at 0 Favor. Favor drifts down over time, rises while their pet issue goes your way and falls faster while it doesn't. Influence is their average Favor. Spend Favor on Grid Hookup Permits (Utilities Commissioner), a State AI Contract for extra revenue (Governor) and Water Rights (Water Board Chair). Scrutiny rises with Outrage, Deviation and scandals, and Influence brings it down. At 50 Scrutiny you're fined at the end of each quarter, and at 75 the state cancels your contract."],
 	["Outrage", "Smog that drifts off your property onto the houses in town or the farmhouses raises Outrage, the more smog the faster. It slowly fades once the air clears. Hover a house to see its smog. Generators near your fence are the usual cause. Later, community projects on the empty town lots will lower it."],
 	["Speed", "Space pauses. The buttons top right run time at 1x, 2x or 4x. A quarter lasts 15 minutes at 1x. N mutes the music."],
 ]
@@ -1218,6 +1224,7 @@ func _set_company_page(open: bool) -> void:
 	company_page.visible = open
 	if open:
 		research_page.visible = false
+		gov.page.visible = false
 	_refresh_menu_buttons()
 
 
@@ -1341,9 +1348,9 @@ func _update_power_tab() -> void:
 		+ "Power bill yesterday: %s\nPollution: %d/100\n\n"
 		+ "Used by: racks, AC units, red-team rigs\nSupplied by: solar, grid (max %d kW), batteries, generators") % [
 		st.demand, int(power_ratio * 100.0), "Daytime" if SUN[_power_step] > 0.0 else "Night", st.solar, roof_objects.values().filter(func(o): return SOLAR_ARRAYS.has(o)).size(), objects.values().filter(func(o): return SOLAR_ARRAYS.has(o)).size(),
-		("%d of %d kW" % [st.grid, GRID_KW]) if objects.values().has("grid") else "not connected",
+		("%d of %d kW" % [st.grid, _grid_kw()]) if objects.values().has("grid") else "not connected",
 		("%d, %d of %d kWh" % [bats, battery_charge, bats * BATTERY_KWH]) if bats > 0 else "none",
-		st.gens, "\n".join(gen_lines) if not gen_lines.is_empty() else "none", _money(power_bill), _pollution(), GRID_KW]
+		st.gens, "\n".join(gen_lines) if not gen_lines.is_empty() else "none", _money(power_bill), _pollution(), _grid_kw()]
 
 
 func _build_deviation_tab() -> void:
@@ -1403,6 +1410,8 @@ func _safety_theater() -> void:
 func _show_modal(title: String, body: String, button_text: String, on_close: Callable, extra: Control = null) -> void:
 	if research_page and research_page.visible:
 		_toggle_menu("research")
+	if gov and gov.page.visible:
+		_toggle_menu("government")
 	_speed_before_modal = speed
 	_set_speed(0)
 	var dim := ColorRect.new()
@@ -1523,7 +1532,13 @@ func _toggle_menu(id: String) -> void:
 		research_page.visible = not research_page.visible
 		if research_page.visible:
 			company_page.visible = false
+			gov.page.visible = false
 		_update_research_tab()
+	elif id == "government":
+		gov.toggle()
+		if gov.page.visible:
+			company_page.visible = false
+			research_page.visible = false
 	elif id == "board":
 		_toggle_company_page(0)
 		return
@@ -1544,6 +1559,8 @@ func _refresh_menu_buttons() -> void:
 			open = build_row.visible
 		elif m.id == "research":
 			open = research_page.visible
+		elif m.id == "government":
+			open = gov.page.visible
 		elif m.id == "board":
 			open = company_page.visible and company_tabs.current_tab == 0
 		menu_buttons[m.id].button_pressed = open
@@ -1681,6 +1698,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_set_speed(1 if speed == 0 else 0)
 		elif event.keycode == KEY_ESCAPE and research_page.visible:
 			_toggle_menu("research")
+		elif event.keycode == KEY_ESCAPE and gov.page.visible:
+			_toggle_menu("government")
 		elif event.keycode == KEY_ESCAPE:
 			if company_page.visible:
 				_set_company_page(false)
@@ -1988,6 +2007,7 @@ func _new_day() -> void:
 	_tick_users()
 	_tick_rivals()
 	_tick_deviation()
+	gov.tick_day()
 	_tick_wear()
 	if game_over:
 		return
@@ -1996,6 +2016,10 @@ func _new_day() -> void:
 			"You ran out of money. The board fired you by group text, then asked if you could still Venmo them for lunch.")
 	elif (day - 1) % DAYS_PER_QUARTER == 0:
 		_end_quarter()
+
+func _grid_kw() -> float:
+	return GRID_KW + gov.grid_bonus()
+
 
 func _racks() -> int:
 	var n := 0
@@ -2622,7 +2646,7 @@ func _tick_power() -> void:
 	battery_charge = minf(battery_charge + minf(solar - used_solar, bat_rate) * h, bat_cap)
 	var grid := 0.0
 	if objects.values().has("grid"):
-		grid = minf(need, GRID_KW)
+		grid = minf(need, _grid_kw())
 		need -= grid
 		_power_cost += grid * h * GRID_PRICE
 	var from_bat := minf(need, minf(bat_rate, battery_charge / h))
@@ -3156,7 +3180,7 @@ func _effects(id: String) -> Array:
 		"battery":
 			return ["Stores %d kWh, %d kW in or out" % [BATTERY_KWH, BATTERY_KW]]
 		"grid":
-			return ["Power: up to %d kW at $%.2f per kWh" % [GRID_KW, GRID_PRICE], "Smog: someone else's problem"]
+			return ["Power: up to %d kW at $%.2f per kWh" % [_grid_kw(), GRID_PRICE], "Smog: someone else's problem"]
 	return []
 
 
