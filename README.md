@@ -41,7 +41,7 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 ## Power
 - Racks draw 6 kW each, rooftop AC Units 5 kW and Window ACs 2 kW. Everything is powered 8 times a day (3 hours a step).
 - **Power (P)** opens the power panel and the power build tools. You start with a Portable Generator outside the office.
-- Cheapest power runs first: rooftop Solar Panels (2 kW, daytime only), then one Grid Hookup (40 kW cap, $1.20/kWh), then Batteries (200 kWh, charged by spare solar), then generators by fuel price:
+- Cheapest power runs first: Solar Panels (daytime only), then one Grid Hookup (40 kW cap, $1.20/kWh), then Batteries (200 kWh, charged by spare solar), then generators by fuel price:
 
 | Generator | Output | Fuel | Smog |
 | --- | --- | --- | --- |
@@ -50,7 +50,7 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 | Large Diesel ($90,000, 3x1) | 200 kW | $1.40/kWh | high |
 | Portable Power Plant ($600,000, 6x2) | 800 kW | $0.90/kWh | half |
 
-- Solar Panels on the ground, outdoors, no smog, daytime only: Small 1x1 (2 kW, $8,000), Medium 2x1 (4.5 kW, $17,000), Large 3x2 (14 kW, $50,000). The rooftop Solar Panel (2 kW) still goes on roofs.
+- Solar Panels come in Small 1x1 (2 kW, $8,000), Medium 2x1 (4.5 kW, $17,000) and Large 3x2 (14 kW, $50,000), daytime only, no smog. Built over a roof they go on the roof; anywhere else they stand on the ground.
 - Generators and the grid hookup go outdoors. Short on power, racks and ACs all run at the share that's covered (a brownout).
 - Pollution is 0-100 per tile (the Power panel shows the worst tile). Generators puff smog onto their tile, and it drifts to neighbouring tiles and slowly clears. A faint haze shows always; the Power panel tints it brown.
 - Fuel and grid costs are added to the daily burn.
