@@ -50,11 +50,14 @@ const ROOF_COLORS := [Color(0.62, 0.33, 0.25), Color(0.45, 0.42, 0.4), Color(0.5
 # Outrage, 0-100: smog drifting off your property onto houses and farmhouses angers the neighbours.
 const OUTRAGE_PER_SMOG := 0.03  # per step, per point of smog on the worst tile of each home
 const OUTRAGE_DECAY := 0.02  # per step (8 a day), as people find something else to be mad about
+const OUTRAGE_PER_FARM_TILE := 0.002  # per step, per tile of farmland you've built on (once you can buy it)
+const OUTRAGE_PER_WATER := 0.001  # per step, per acre-foot a year you pump
 const SMOG_SPREAD := 0.5  # same drift as on your property
 const SMOG_DECAY := 0.015
 
 var _time := 0.0
 var outrage := 0.0
+var water_use := 0.0  # acre-feet a year you pump; the water system sets this once it exists
 var smog := {}  # Vector2i -> smog on tiles off your property (sparse, 0-100)
 var _outrage_warned := false
 
@@ -100,12 +103,25 @@ func tick_smog() -> void:
 			rise += _worst_smog(lot.r) * OUTRAGE_PER_SMOG
 	for fr in FARMHOUSES:
 		rise += _worst_smog(fr) * OUTRAGE_PER_SMOG
+	rise += farmland_built() * OUTRAGE_PER_FARM_TILE
+	rise += water_use * OUTRAGE_PER_WATER
 	outrage = clampf(outrage + rise - OUTRAGE_DECAY, 0.0, 100.0)
 	if outrage >= 25.0 and not _outrage_warned:
 		_outrage_warned = true
 		get_parent()._chet("Bro, the neighbours can taste our generators. %s is mad. Outrage is in the Guide (G)." % TOWN)
 	elif outrage < 10.0:
 		_outrage_warned = false
+
+
+# Tiles of farmland with something of yours on them. Always 0 until you can buy farmland.
+func farmland_built() -> int:
+	var main := get_parent()
+	var seen := {}
+	for layer in [main.floor_tiles, main.wall_tiles, main.objects]:
+		for t in layer:
+			if not PROP.has_point(t) and not seen.has(t) and (kind_at(t) == "field" or kind_at(t) == "farm_road"):
+				seen[t] = true
+	return seen.size()
 
 
 func _worst_smog(r: Rect2i) -> float:
