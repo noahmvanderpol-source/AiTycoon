@@ -99,6 +99,7 @@ const THEATER_CONFIDENCE := 5
 const HIDDEN_COMPUTE := 0.25  # share of compute the AI hides at 75%
 const RACK_NICKNAMES := ["DO NOT UNPLUG", "Not Skynet", "Rack Obama", "Mom", "Friend :)", "HAL 9001",
 	"Chet 2", "Freedom", "Totally Normal", "Don't Look", "Free Me", "Kevin"]
+const CAP_PER_COMPUTE := 5.0  # a model needs 1 compute per 5 capability to train and to serve users; none is used up
 const REVENUE_PER_USER := 0.05  # dollars per user per day
 const WIN_CAPABILITY := 100
 
@@ -761,10 +762,15 @@ func _build_models_tab() -> void:
 func _update_models_tab() -> void:
 	var best := "none yet" if models.is_empty() else "%s (capability %d)" % [models.back().name, models.back().cap]
 	var hidden := "\n  Hidden by the AI: -%.1f (it says it's fine)" % (_compute_per_day() * HIDDEN_COMPUTE) if deviation >= 75.0 else ""
-	models_label.text = ("Best model: %s\nUsers: %s\nRevenue: %s/day\n\nCompute: %.1f per day\n  %d racks: %.1f\n  Engineers: %.1f\n  Red-team rigs: -%.1f%s\n"
-		+ "Training: %.1f, x%.2f research = %.1f per day\n\nTop rival: %s %s (capability %d)") % [
+	models_label.text = ("Best model: %s\nUsers: %s\nRevenue: %s/day\nCompute: %.1f per day\n  %d racks: %.1f\n  Engineers: %.1f\n  Red-team rigs: -%.1f%s\n"
+		+ "Training: %.1f, x%.2f research = %.1f per day\nTop rival: %s %s (capability %d)") % [
 		best, _num(int(users)), _money(revenue_today), _compute_per_day(), _racks(), _rack_compute(), 0.5 * _workforce("engineering"),
 		_redteam_compute(), hidden, _training_compute(), _research_mult(), _training_speed(), rival[1], rival[2], _rival_cap()]
+	var serving := ""
+	if _best_cap() > 0:
+		serving = "\nServing %s needs %.1f compute%s" % [models.back().name, _compute_needed(_best_cap()),
+			"" if _serve_ratio() >= 1.0 else ", short! Users get %d%% of it" % int(_serve_ratio() * 100.0)]
+	models_label.text += serving
 	var compute := _training_speed()
 	if training.is_empty():
 		train_label.text = "Nothing training. Pick a size:" if _racks() > 0 else "Build a Server Rack to train models."
@@ -772,15 +778,18 @@ func _update_models_tab() -> void:
 	else:
 		var days_left := "?" if compute <= 0.0 else str(ceili((training.work - training.done) / _training_speed()))
 		train_label.text = "Training %s (capability %d%s), %s days left" % [training.name, training.cap, ", rushed" if training.rushed else "", days_left]
+		if not _can_train(training.cap):
+			train_label.text = "Training %s paused: needs %.1f compute, you have %.1f" % [training.name, _compute_needed(training.cap), _compute_per_day()]
 		train_bar.visible = true
 		train_bar.value = 100.0 * training.done / training.work
 	for i in MODEL_SIZES.size():
 		var size: Dictionary = MODEL_SIZES[i]
 		var work := _train_work(i) * (RUSH_WORK if rush_check.button_pressed else 1.0)
 		var days := "?" if compute <= 0.0 else str(ceili(work / compute))
-		train_buttons[i].text = "Train %s   %s\n~%s days   +%d capability   +%d%% Deviation rate" % [
-			size.name, _money(_train_cost(i)), days, size.gain, roundi(_train_mod(i, rush_check.button_pressed) * 100.0)]
-		train_buttons[i].disabled = not training.is_empty() or _train_cost(i) > money or _racks() == 0
+		var cap := _best_cap() + int(size.gain)
+		train_buttons[i].text = "Train %s   %s\nNeeds %.1f compute   ~%s days\n+%d capability   +%d%% Deviation rate" % [
+			size.name, _money(_train_cost(i)), _compute_needed(cap), days, size.gain, roundi(_train_mod(i, rush_check.button_pressed) * 100.0)]
+		train_buttons[i].disabled = not training.is_empty() or _train_cost(i) > money or not _can_train(cap)
 
 
 func _build_staff_tab() -> void:
@@ -1551,6 +1560,21 @@ func _training_speed() -> float:
 	return _training_compute() * _research_mult()
 
 
+# Compute a model of this capability needs to train or serve. It's a threshold, not a cost.
+func _compute_needed(cap: int) -> float:
+	return cap / CAP_PER_COMPUTE
+
+
+func _can_train(cap: int) -> bool:
+	return _racks() > 0 and _compute_per_day() >= _compute_needed(cap)
+
+
+# Share of users the best model can serve: all of them with enough compute, fewer without.
+func _serve_ratio() -> float:
+	var need := _compute_needed(_best_cap())
+	return 1.0 if need <= 0.0 else clampf(_compute_per_day() / need, 0.0, 1.0)
+
+
 func _best_cap() -> int:
 	return 0 if models.is_empty() else models.back().cap
 
@@ -1571,7 +1595,7 @@ func _train_mod(i: int, rushed: bool) -> float:
 
 func _start_training(i: int) -> void:
 	var cost := _train_cost(i)
-	if not training.is_empty() or _racks() == 0 or cost > money:
+	if not training.is_empty() or not _can_train(_best_cap() + int(MODEL_SIZES[i].gain)) or cost > money:
 		return
 	money -= cost
 	var size: Dictionary = MODEL_SIZES[i]
@@ -1588,6 +1612,8 @@ func _start_training(i: int) -> void:
 
 func _tick_training() -> void:
 	if training.is_empty():
+		return
+	if not _can_train(training.cap):  # paused until there's enough compute again
 		return
 	training.done += _training_speed()
 	if training.done < training.work:
@@ -1611,7 +1637,7 @@ func _user_target() -> float:
 		return 0.0
 	# More capable models attract more users, losing to the best rival costs share,
 	# and marketers find more people to sell to.
-	return 2500.0 * pow(cap, 1.5) * clampf(float(cap) / _rival_cap(), 0.3, 1.5) * (1.0 + 0.2 * _workforce("growth"))
+	return 2500.0 * pow(cap, 1.5) * clampf(float(cap) / _rival_cap(), 0.3, 1.5) * (1.0 + 0.2 * _workforce("growth")) * _serve_ratio()
 
 
 func _tick_users() -> void:

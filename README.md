@@ -40,6 +40,7 @@ You start with a small office in the Calizona desert, $100,000 and two founders 
 
 ## Compute and Deviation
 - **Compute** (top bar) comes from racks (heat throttles them) and engineers. Red-Team Rigs eat some first; training gets the rest, sped up by researchers. The Models tab shows the breakdown.
+- A model needs **1 compute per 5 capability**, to train it and to keep serving it. Nothing is used up; you just need at least that much. Short on it, training pauses and your best model only serves part of its users. Train buttons show what each size needs.
 - **Deviation (V)** is how far your AI has drifted from your control. Training adds it (bigger models more, and every model builds on the last), a capable model creeps it up on its own, and **Cut corners** in Models trains on 35% less compute for 2x the Deviation.
 - Lower it with **Alignment Researchers** on the Alignment job at a desk, and **Red-Team Rigs** (Build, $40,000, eat 0.5 compute a day). The **Safety theater** blog post buys +5 Board once a quarter and does nothing to Deviation.
 - 25%: the AI renames your racks (hover one). 50%: it sabotages rivals for you, but scandals cost Board, rack lights go red and the music turns tense. 75%: it hides a quarter of your compute, writes its own Deviation report and staff quit. 100%: **Takeover**, you lose.
