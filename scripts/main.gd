@@ -570,6 +570,7 @@ const GUIDE := [
 	["Power (P)", "Racks, ACs and red-team rigs use power. The cheapest power runs first: solar, then the grid, then batteries, then generators by fuel price. Batteries store spare solar for the night. The grid hookup is capped until you lobby for more. Generators go outside, and their smog drifts across the map."],
 	["Deviation (V)", "Every rack adds Deviation, and training, cutting corners and smarter models raise the rate. Alignment researchers at desks and Red-Team Rigs bring it back down (rigs eat compute). At 25% the AI gets quirky, at 50% it sabotages rivals for you and scandals follow, at 75% it hides compute, lies on reports and staff quit. At 100% it takes over."],
 	["Research (E)", "Researchers at desks make research points; the founders make a trickle on their own. Pick a project in each of four branches: Construction, Equipment, Computer Chips and Productivity. Each branch is researched in order. Projects unlock new things in Build or give a lasting bonus. Points keep banking while nothing is picked."],
+	["Outrage", "Smog that drifts off your property onto the houses in town or the farmhouses raises Outrage, the more smog the faster. It slowly fades once the air clears. Hover a house to see its smog. Generators near your fence are the usual cause. Later, community projects on the empty town lots will lower it."],
 	["Speed", "Space pauses. The buttons top right run time at 1x, 2x or 4x. A quarter lasts 15 minutes at 1x. N mutes the music."],
 ]
 
@@ -1133,9 +1134,9 @@ func _chet(text: String) -> void:
 func _update_hud() -> void:
 	var q := (day - 1) / DAYS_PER_QUARTER
 	var burn := _daily_burn()
-	var revenue := "Revenue %s/day" % _money(revenue_today) if models.size() > 0 else "Revenue $0 (pre-revenue)"
-	top_label.text = "%s     %s     Burn %s/day     %s     Users %s     Compute %.1f     Deviation %d%%     Board %d%%     %s, Day %d" % [
-		company, _money(money), _money(burn), revenue, _num(int(users)), _compute_per_day(), int(deviation), confidence,
+	var revenue := "Revenue %s/day" % _money(revenue_today) if models.size() > 0 else "Pre-revenue"
+	top_label.text = "%s   %s   Burn %s/day   %s   Users %s   Compute %.1f   Deviation %d%%   Outrage %d%%   Board %d%%   %s, Day %d" % [
+		company, _money(money), _money(burn), revenue, _num(int(users)), _compute_per_day(), int(deviation), int(world.outrage), confidence,
 		_quarter_name(q), (day - 1) % DAYS_PER_QUARTER + 1]
 	_update_models_tab()
 	_update_staff_tab()
@@ -2009,7 +2010,10 @@ func _spread_smog() -> void:
 				var n: Vector2i = Vector2i(x, y) + d
 				if _in_bounds(n):
 					next[n.y * GRID_W + n.x] += share
+				else:
+					world.add_smog(n, share)  # over the fence, onto the neighbours
 	smog = next
+	world.tick_smog()
 
 
 # The Pollution meter, 0-100: the air on the worst tile.

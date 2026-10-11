@@ -22,6 +22,7 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 - West: Highway CZ-99, with an access road to your west fence. East: open desert.
 - South: the town of Dustwater (15 houses, a gas station) with empty community lots for a future park or library.
 - Hover anything off your property to see what it is.
+- **Outrage** (top bar, 0-100%): smog that drifts over your fence onto houses or farmhouses raises it, more smog faster; it slowly fades when the air clears. Hover a house to see its smog.
 
 ## Models
 - Name your company when the game starts.

@@ -47,7 +47,16 @@ const HOUSE_COLORS := [Color(0.9, 0.85, 0.72), Color(0.78, 0.62, 0.48), Color(0.
 		Color(0.88, 0.74, 0.6), Color(0.8, 0.78, 0.66), Color(0.68, 0.72, 0.6)]
 const ROOF_COLORS := [Color(0.62, 0.33, 0.25), Color(0.45, 0.42, 0.4), Color(0.55, 0.45, 0.35)]
 
+# Outrage, 0-100: smog drifting off your property onto houses and farmhouses angers the neighbours.
+const OUTRAGE_PER_SMOG := 0.03  # per step, per point of smog on the worst tile of each home
+const OUTRAGE_DECAY := 0.02  # per step (8 a day), as people find something else to be mad about
+const SMOG_SPREAD := 0.5  # same drift as on your property
+const SMOG_DECAY := 0.015
+
 var _time := 0.0
+var outrage := 0.0
+var smog := {}  # Vector2i -> smog on tiles off your property (sparse, 0-100)
+var _outrage_warned := false
 
 
 func _process(delta: float) -> void:
@@ -56,6 +65,65 @@ func _process(delta: float) -> void:
 	if cam:  # don't let the view wander off the edge of the map
 		cam.position = cam.position.clamp(Vector2(WORLD.position) * TILE, Vector2(WORLD.end) * TILE)
 	queue_redraw()
+
+
+# --- Smog and Outrage -----------------------------------------------------------
+
+# Smog that drifts over your fence (main.gd's spread hands it over).
+func add_smog(t: Vector2i, v: float) -> void:
+	if WORLD.has_point(t) and not PROP.has_point(t):
+		smog[t] = minf(smog.get(t, 0.0) + v, 100.0)
+
+
+func smog_at(t: Vector2i) -> float:
+	return smog.get(t, 0.0)
+
+
+# One step of drift, then the neighbours react. Called with each power/heat step.
+func tick_smog() -> void:
+	var next := {}
+	for t in smog:
+		var v: float = smog[t] * (1.0 - SMOG_DECAY)
+		var share := v * SMOG_SPREAD / 4.0
+		next[t] = next.get(t, 0.0) + v - share * 4.0
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = t + d
+			if WORLD.has_point(n) and not PROP.has_point(n):  # what drifts back over the fence or off the map is lost
+				next[n] = next.get(n, 0.0) + share
+	smog = {}
+	for t in next:
+		if next[t] >= 0.01:
+			smog[t] = next[t]
+	var rise := 0.0
+	for lot in LOTS:
+		if lot.kind == "house":
+			rise += _worst_smog(lot.r) * OUTRAGE_PER_SMOG
+	for fr in FARMHOUSES:
+		rise += _worst_smog(fr) * OUTRAGE_PER_SMOG
+	outrage = clampf(outrage + rise - OUTRAGE_DECAY, 0.0, 100.0)
+	if outrage >= 25.0 and not _outrage_warned:
+		_outrage_warned = true
+		get_parent()._chet("Bro, the neighbours can taste our generators. %s is mad. Outrage is in the Guide (G)." % TOWN)
+	elif outrage < 10.0:
+		_outrage_warned = false
+
+
+func _worst_smog(r: Rect2i) -> float:
+	var worst := 0.0
+	if smog.is_empty():
+		return worst
+	for x in range(r.position.x, r.end.x):
+		for y in range(r.position.y, r.end.y):
+			worst = maxf(worst, smog.get(Vector2i(x, y), 0.0))
+	return worst
+
+
+func _home_rect(t: Vector2i) -> Rect2i:
+	var i := _farmhouse_at(t)
+	if i >= 0:
+		return FARMHOUSES[i]
+	var lot := _lot_at(t)
+	return lot.r if not lot.is_empty() else Rect2i(t, Vector2i.ONE)
 
 
 # --- What's where -------------------------------------------------------------
@@ -116,6 +184,16 @@ func _field_crop(t: Vector2i) -> String:
 
 # Hover text for anything off your property.
 func describe(t: Vector2i) -> String:
+	var text := _describe_kind(t)
+	var kind := kind_at(t)
+	if kind == "house" or kind == "farmhouse":
+		text += "\nSmog: %d" % int(_worst_smog(_home_rect(t)))
+	elif smog_at(t) >= 1.0:
+		text += "\nSmog: %d" % int(smog_at(t))
+	return text
+
+
+func _describe_kind(t: Vector2i) -> String:
 	match kind_at(t):
 		"canal", "bank":
 			return "Calizona Aqueduct Canal\nNorthern edge of the map\nWater rights: lobbying needed (later)"
@@ -177,6 +255,18 @@ func _draw() -> void:
 		if vis.intersects(lot.r):
 			call("_draw_" + lot.kind, lot.r)
 	_draw_signs(vis)
+	_draw_smog(a, b)
+
+
+func _draw_smog(a: Vector2i, b: Vector2i) -> void:
+	if smog.is_empty():
+		return
+	var main := get_parent()
+	var strength := 1.0 if main.side_panel.visible and main.tabs.current_tab == 4 else 0.35  # as on your property
+	for t in smog:
+		var v: float = smog[t]
+		if v > 0.5 and t.x >= a.x and t.y >= a.y and t.x < b.x and t.y < b.y:
+			draw_rect(_rect(t), Color(0.35, 0.28, 0.2, clampf(v / 50.0, 0.0, 0.7) * strength))
 
 
 func _rect(t: Vector2i) -> Rect2:
