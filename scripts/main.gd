@@ -7,6 +7,7 @@ extends Node2D
 
 const TILE := 32
 const SUB := TILE / 2  # each tile splits into a 2x2 subgrid for small, precisely placed items
+const PERSON_SCALE := 0.6  # staff are drawn this size so each fits in one subgrid square
 const WALL_H := 30.0  # how tall walls look in the three-quarter view
 const GRID_W := 64
 const GRID_H := 48
@@ -2930,7 +2931,9 @@ func _draw_coffee(p: Vector2) -> void:
 func _draw_staff(s: Dictionary) -> void:
 	var at_desk: bool = s.working and objects.get(s.seat) == "desk"
 	# At a desk they sit down behind it, so the desk (drawn after) hides their legs.
-	var pos: Vector2 = s.pos + (Vector2(0, 10) if at_desk else Vector2.ZERO)
+	# People are drawn at PERSON_SCALE so one fits inside a subgrid square.
+	draw_set_transform(s.pos + (Vector2(0, 6) if at_desk else Vector2.ZERO), 0.0, Vector2(PERSON_SCALE, PERSON_SCALE))
+	var pos := Vector2.ZERO
 	_draw_person(pos, ROLES[s.role].shirt)
 	if s.productivity < 0.9:  # sweating
 		var drip := fmod(_time * 1.5 + s.pos.x, 1.0) * 6.0
@@ -2942,6 +2945,7 @@ func _draw_staff(s: Dictionary) -> void:
 		var n := int(_time * 3.0 + s.pos.x) % 4
 		for i in mini(n, 3):
 			draw_rect(Rect2(c + Vector2(3 + i * 4, 4), Vector2(2, 2)), Color(0.15, 0.15, 0.2))
+	draw_set_transform(Vector2.ZERO)
 
 
 func _draw_person(pos: Vector2, shirt: Color) -> void:
