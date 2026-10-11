@@ -54,15 +54,15 @@ const BOARD := [
 # Rival labs follow a script: [day, lab, model, capability].
 const RIVAL_RELEASES := [
 	[1, "ClosedAI", "ChatGTP-3", 10],
-	[60, "Gogle", "Bard Simpson", 13],
+	[60, "Algorithmic", "Algo 1", 13],
 	[150, "ClosedAI", "ChatGTP-4", 20],
-	[230, "Metta", "Llamarama 2", 26],
-	[320, "Gogle", "Gemineye Ultra", 34],
+	[230, "MassiveHard", "CoPlotter", 26],
+	[320, "Algorithmic", "Algo Ultra", 34],
 	[420, "ClosedAI", "ChatGTP-5", 45],
-	[520, "Metta", "Llamarama 3", 55],
-	[620, "Gogle", "Gemineye Infinity", 67],
+	[520, "MassiveHard", "CoPlotter 2", 55],
+	[620, "Algorithmic", "Algo Infinity", 67],
 	[730, "ClosedAI", "ChatGTP-6o-mini-max", 80],
-	[850, "Metta", "Llamarama 4 (open-ish)", 92],
+	[850, "MassiveHard", "CoPlotter 365", 92],
 ]
 
 # Every buildable thing. layer: which map layer it lives on. drag: how the mouse places it.
