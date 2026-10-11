@@ -229,6 +229,7 @@ const RESEARCH := [
 	{"id": "pto", "branch": "productivity", "name": "Unlimited PTO", "cost": 160, "productivity": 0.15,
 		"desc": "Staff 15% more productive. Nobody takes it."},
 ]
+const UNLOCK_ALL := true  # testing: every Build item is available without research. Set false to lock them.
 const RESEARCH_BASE := 1.0  # research points a day the founders scrape together on their own
 const RESEARCH_PER_WORKER := 1.0  # extra points a day per researcher at a desk
 
@@ -661,6 +662,8 @@ func _research_bonus(key: String) -> float:
 
 
 func _locked(tool_id: String) -> bool:
+	if UNLOCK_ALL:
+		return false
 	for r in RESEARCH:
 		if not research_done.has(r.id) and tool_id in r.get("unlocks", []):
 			return true
