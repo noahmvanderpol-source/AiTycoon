@@ -17,6 +17,26 @@ const RECRUITER_FEE := 5000
 const SEVERANCE_DAYS := 5
 const RACK_POWER_PER_DAY := 400
 const SOLAR_SAVING := 60  # each rooftop solar panel knocks this off the rack power bill
+# Heat. Every indoor tile has a temperature in Fahrenheit (this is America, bro).
+# Racks heat their tile, heat spreads to neighbors, walls insulate, and buildings only
+# leak a little back toward room temperature, so a hot room keeps getting hotter.
+const INDOOR_TEMP := 72.0
+const OUTDOOR_TEMP := 95.0  # Calizona, in the shade, of which there is none
+const MAX_TEMP := 150.0
+const HEAT_STEPS_PER_DAY := 8
+const RACK_HEAT := 5.0  # degrees added to a rack's tile each heat step
+const HEAT_SPREAD := 0.2  # share of the difference that flows to each neighbor per step
+const HEAT_LEAK := 0.01  # how fast a building drifts back to room temperature on its own
+const RACK_SAFE_TEMP := 85.0  # racks throttle above this
+const RACK_THROTTLE := 0.015  # compute lost per degree over, down to RACK_MIN_OUTPUT
+const RACK_MIN_OUTPUT := 0.2
+const COMFORT_TEMP := 76.0  # staff slow down above this
+const HEAT_PRODUCTIVITY_LOSS := 0.02  # productivity lost per degree over, down to 20%
+# Cooling equipment. Each one pulls the tiles within `radius` toward `target` by `pull`
+# per heat step and costs `power` a day. New coolers (heat pumps, water cooling) go here.
+const COOLERS := {
+	"ac": {"radius": 2, "target": 64.0, "pull": 0.2, "power": 300},
+}
 const REVENUE_PER_USER := 0.05  # dollars per user per day
 const WIN_CAPABILITY := 100
 
@@ -96,6 +116,8 @@ const CHET_TIPS := [
 	"Users are revenue. Revenue is users. I learned that at Stanford. Well, near Stanford.",
 	"Right-click demolishes stuff. Like the old office culture. Disrupted.",
 	"Every door is an open door policy if you think about it.",
+	"Racks run hot, bro. Hot racks throttle, hot people sweat. Heat (H) shows where it's cooking.",
+	"AC Units turn money into cold. Very inefficiently. It's Calizona, we don't have a choice.",
 ]
 
 var floor_tiles := {}  # Vector2i -> "carpet" / "concrete"
@@ -130,6 +152,9 @@ var panning := false
 const LEVELS := ["Ground", "Roof"]
 var view_level := 0
 var roof_objects := {}  # Vector2i -> "solar" / "ac", things built on roofs
+var heat := {}  # indoor tile Vector2i -> temperature; anywhere else is OUTDOOR_TEMP
+var _heat_timer := 0.0
+var _heat_warned := false
 var buildings := []  # [{tiles: {Vector2i: true}, alpha}] each enclosed room gets a roof
 var staff := []  # [{name, role, job, salary, pos, path, wait, seat, spot, working, label}]
 var astar := AStarGrid2D.new()
@@ -159,6 +184,7 @@ const MENUS := [
 	{"id": "models", "name": "Models", "key": KEY_M, "tab": 0},
 	{"id": "staff", "name": "Staff", "key": KEY_T, "tab": 1},
 	{"id": "board", "name": "Board", "key": KEY_O, "tab": 2},
+	{"id": "heat", "name": "Heat", "key": KEY_H, "tab": 3},
 ]
 var models_label: Label
 var train_label: Label
@@ -170,6 +196,7 @@ var board_label: Label
 var board_bar: ProgressBar
 var board_target_label: Label
 var board_members_label: Label
+var heat_label: Label
 var modal: Control  # the open pop-up, if any; the game pauses under it
 var modal_button: Button
 var _speed_before_modal := 1
@@ -310,6 +337,7 @@ func _build_ui() -> void:
 	_build_models_tab()
 	_build_staff_tab()
 	_build_board_tab()
+	_build_heat_tab()
 
 	cost_label = Label.new()
 	cost_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -439,8 +467,8 @@ func _update_staff_tab() -> void:
 			status = "Heading to work"
 		elif JOBS[s.job].at != "":
 			status = "Needs a free %s" % ("desk" if JOBS[s.job].at == "desk" else "server rack")
-		s.label.text = "%s, %s\n%s" % [s.name, ROLES[s.role].name, status]
-	staff_label.text = "%d staff, payroll %s/day\nWorking now: Research %.1f, Engineering %.1f, Growth %.1f" % [
+		s.label.text = "%s, %s, %d%%\n%s" % [s.name, ROLES[s.role].name, int(s.productivity * 100.0), status]
+	staff_label.text = "%d staff, payroll %s/day\nPercent is productivity (heat lowers it)\nWorking now: Research %.1f, Engineering %.1f, Growth %.1f" % [
 		staff.size(), _money(payroll), _workforce("research"), _workforce("engineering"), _workforce("growth")]
 
 
@@ -473,6 +501,42 @@ func _update_board_tab() -> void:
 		lines.append("%s, %s" % [m.name, m.seat])
 	board_members_label.text = "Mood: %s\n\n%s\n\nHit a target: +15. Miss: -25. At 0%% you're fired. Run out of money and you're fired faster." % [
 		mood, "\n".join(lines)]
+
+
+func _build_heat_tab() -> void:
+	var box := _tab_box("Heat")
+	heat_label = _wrap_label(box)
+
+
+func _update_heat_tab() -> void:
+	var hottest := 0.0
+	var worst_rack := 0.0
+	for t in objects:
+		if objects[t] == "rack":
+			worst_rack = maxf(worst_rack, _temp(t))
+	var total := 0.0
+	for t in heat:
+		total += heat[t]
+		hottest = maxf(hottest, heat[t])
+	var avg := INDOOR_TEMP if heat.is_empty() else total / heat.size()
+	var prod := 0.0
+	for s in staff:
+		prod += s.productivity
+	prod = 1.0 if staff.is_empty() else prod / staff.size()
+	var coolers := 0
+	var cool_power := 0
+	for t in roof_objects:
+		if COOLERS.has(roof_objects[t]):
+			coolers += 1
+			cool_power += COOLERS[roof_objects[t]].power
+	var lost := _racks() - _rack_compute()
+	heat_label.text = ("Indoors: %d°F average, %d°F hottest\nHottest rack: %d°F\nRacks throttling: %.1f of %d racks' compute lost\n"
+		+ "Staff productivity: %d%%\nCooling: %d AC units, %s/day in power\n\n"
+		+ "Racks heat the room and the heat spreads. Racks slow down above %d°F, staff above %d°F. "
+		+ "Put AC Units on the roof (R in Build) over the hot spots; each one cools %d tiles around it.\n\n"
+		+ "The map is tinted by temperature while this panel is open.") % [
+		avg, hottest, worst_rack, lost, _racks(), int(prod * 100.0), coolers, _money(cool_power),
+		RACK_SAFE_TEMP, COMFORT_TEMP, (COOLERS.ac.radius * 2 + 1) * (COOLERS.ac.radius * 2 + 1)]
 
 
 # A centered pop-up that pauses the game until its button is pressed.
@@ -601,6 +665,7 @@ func _update_hud() -> void:
 	_update_models_tab()
 	_update_staff_tab()
 	_update_board_tab()
+	_update_heat_tab()
 
 
 func _num(v: int) -> String:
@@ -633,6 +698,10 @@ func _process(delta: float) -> void:
 	while _day_timer >= SECONDS_PER_DAY and not modal and not game_over:
 		_day_timer -= SECONDS_PER_DAY
 		_new_day()
+	_heat_timer += delta * speed
+	while _heat_timer >= SECONDS_PER_DAY / HEAT_STEPS_PER_DAY and not modal and not game_over:
+		_heat_timer -= SECONDS_PER_DAY / HEAT_STEPS_PER_DAY
+		_tick_heat()
 	_tip_timer += delta
 	if _tip_timer > 15.0:
 		_tip = (_tip + 1) % CHET_TIPS.size()
@@ -644,7 +713,7 @@ func _process(delta: float) -> void:
 		paint_tiles[_cursor()] = true
 	_update_staff(delta * maxf(speed, 0.0))
 	for bld in buildings:  # roofs fade out while the mouse is inside the building
-		var hide: bool = view_level == 0 and bld.tiles.has(hover)
+		var hide: bool = view_level == 0 and (bld.tiles.has(hover) or _heat_view())
 		bld.alpha = move_toward(bld.alpha, 0.0 if hide else 1.0, delta * 5.0)
 	_update_hud()
 	_update_cost_label()
@@ -854,8 +923,12 @@ func _daily_burn() -> int:
 	var payroll := 0
 	for s in staff:
 		payroll += s.salary
+	var power := _racks() * RACK_POWER_PER_DAY
+	for t in roof_objects:
+		if COOLERS.has(roof_objects[t]):
+			power += COOLERS[roof_objects[t]].power
 	var solar := roof_objects.values().count("solar") * SOLAR_SAVING
-	return payroll + maxi(_racks() * RACK_POWER_PER_DAY - solar, 0)
+	return payroll + maxi(power - solar, 0)
 
 
 # --- Models, users and rivals ------------------------------------------------
@@ -882,9 +955,21 @@ func _racks() -> int:
 	return n
 
 
-# Each engineer tending a rack adds half a rack's worth of compute.
+# Each engineer tending a rack adds half a rack's worth of compute. Hot racks throttle.
 func _compute_per_day() -> float:
-	return _racks() + 0.5 * _workforce("engineering")
+	return _rack_compute() + 0.5 * _workforce("engineering")
+
+
+func _rack_compute() -> float:
+	var c := 0.0
+	for t in objects:
+		if objects[t] == "rack":
+			c += _rack_output(t)
+	return c
+
+
+func _rack_output(t: Vector2i) -> float:
+	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0)
 
 
 # Researchers make every unit of compute count for more.
@@ -1075,7 +1160,7 @@ func _add_staff(role: String, pos: Vector2, salary: int) -> void:
 			job = j
 	staff.append({"name": name, "role": role, "job": job, "salary": salary, "pos": pos,
 		"path": PackedVector2Array(), "wait": rng.randf_range(0.5, 2.0), "seat": NO_SEAT,
-		"spot": NO_SEAT, "working": false, "label": null})
+		"spot": NO_SEAT, "working": false, "label": null, "productivity": 1.0})
 
 
 func _hire(role: String) -> void:
@@ -1113,7 +1198,7 @@ func _workforce(job: String) -> float:
 	var n := 0.0
 	for s in staff:
 		if s.working and s.job == job:
-			n += 1.0 if s.role == JOBS[job].role else 0.5
+			n += (1.0 if s.role == JOBS[job].role else 0.5) * s.productivity
 	return n
 
 
@@ -1176,6 +1261,71 @@ func _update_staff(delta: float) -> void:
 			s.path.remove_at(0)
 
 
+# --- Heat -------------------------------------------------------------------
+
+func _temp(t: Vector2i) -> float:
+	return heat.get(t, OUTDOOR_TEMP)
+
+
+func _heat_view() -> bool:
+	return side_panel.visible and tabs.current_tab == 3
+
+
+func _tick_heat() -> void:
+	for t in objects:
+		if objects[t] == "rack" and heat.has(t):
+			heat[t] += RACK_HEAT
+	for t in roof_objects:
+		if not COOLERS.has(roof_objects[t]):
+			continue
+		var c: Dictionary = COOLERS[roof_objects[t]]
+		for dx in range(-c.radius, c.radius + 1):
+			for dy in range(-c.radius, c.radius + 1):
+				var n: Vector2i = t + Vector2i(dx, dy)
+				if heat.has(n) and heat[n] > c.target:
+					heat[n] += (c.target - heat[n]) * c.pull
+	# Spread: each tile trades heat with its indoor neighbors. Walls don't conduct.
+	var next := {}
+	for t in heat:
+		var v: float = heat[t]
+		for d in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+			if heat.has(t + d):
+				v += (heat[t + d] - heat[t]) * HEAT_SPREAD
+		v += (INDOOR_TEMP - v) * HEAT_LEAK
+		next[t] = minf(v, MAX_TEMP)
+	heat = next
+	for s in staff:
+		# Productivity starts at 100%. Heat takes a cut; break rooms and the like can add to it later.
+		var over := _temp(Vector2i((s.pos / TILE).floor())) - COMFORT_TEMP
+		s.productivity = clampf(1.0 - maxf(over, 0.0) * HEAT_PRODUCTIVITY_LOSS, 0.2, 1.0)
+	if not _heat_warned:
+		for t in objects:
+			if objects[t] == "rack" and _temp(t) > RACK_SAFE_TEMP + 10.0:
+				_heat_warned = true
+				_chet("Bro, the server room is %d degrees. The racks are thermal throttling. Put an AC Unit on the roof over them. Heat (H) shows the hot spots." % _temp(t))
+				break
+
+
+func _heat_color(f: float) -> Color:
+	# Blue when cool, clear around room temperature, then orange and red.
+	if f < INDOOR_TEMP:
+		return Color(0.3, 0.6, 1.0, clampf((INDOOR_TEMP - f) / 10.0, 0.0, 1.0) * 0.4)
+	var k := clampf((f - INDOOR_TEMP) / 40.0, 0.0, 1.0)
+	return Color(1.0, 0.8 - 0.6 * k, 0.2, 0.1 + 0.45 * k)
+
+
+func _draw_heat_tint() -> void:
+	for t in heat:
+		draw_rect(Rect2(Vector2(t) * TILE, Vector2(TILE, TILE)), _heat_color(heat[t]))
+
+
+func _draw_rack_temps() -> void:
+	for t in objects:
+		if objects[t] == "rack" and _rack_output(t) < 1.0:
+			draw_string(ThemeDB.fallback_font, Vector2(t) * TILE + Vector2(2, -26), "%d%%" % int(_rack_output(t) * 100.0),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 0.35, 0.3))
+
+
 # --- Roofs ------------------------------------------------------------------
 
 func _find_buildings() -> void:
@@ -1228,6 +1378,12 @@ func _find_buildings() -> void:
 				if o.tiles.has(start):
 					alpha = o.alpha
 			buildings.append({"tiles": tiles, "alpha": alpha})
+	var indoor := {}
+	for bld in buildings:
+		for t in bld.tiles:
+			if wall_tiles.get(t) != "wall":
+				indoor[t] = heat.get(t, INDOOR_TEMP)  # new rooms start at room temperature
+	heat = indoor
 	for t in roof_objects.keys():  # the roof came down, and so did whatever was on it
 		if not _roofed(t):
 			money += int(_tool_by_id(roof_objects[t]).cost / 2)
@@ -1327,6 +1483,9 @@ func _draw() -> void:
 	for y in range(a.y, b.y + 1):
 		draw_line(Vector2(a.x, y) * TILE, Vector2(b.x, y) * TILE, grid)
 
+	if _heat_view():
+		_draw_heat_tint()  # on the floor, under walls and furniture
+
 	# Three-quarter view: things have height and are drawn back-to-front, row by row,
 	# so anything further south overlaps what's behind it.
 	var rows := {}
@@ -1356,6 +1515,8 @@ func _draw() -> void:
 				_draw_door(item)
 			else:
 				call("_draw_" + objects[item], Vector2(item) * TILE, item)
+	if _heat_view():
+		_draw_rack_temps()
 	for bld in buildings:
 		_draw_roof(bld)
 	_draw_preview()
@@ -1469,6 +1630,9 @@ func _draw_staff(s: Dictionary) -> void:
 	# At a desk they sit down behind it, so the desk (drawn after) hides their legs.
 	var pos: Vector2 = s.pos + (Vector2(0, 10) if at_desk else Vector2.ZERO)
 	_draw_person(pos, ROLES[s.role].shirt)
+	if s.productivity < 0.9:  # sweating
+		var drip := fmod(_time * 1.5 + s.pos.x, 1.0) * 6.0
+		draw_circle(pos + Vector2(-9, -24 + drip), 2.0, Color(0.5, 0.8, 1.0))
 	if s.working:
 		# A little "busy" bubble with dots that tick along.
 		var c := pos + Vector2(10, -38)
