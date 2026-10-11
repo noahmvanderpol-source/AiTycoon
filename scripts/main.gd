@@ -19,7 +19,7 @@ const SEVERANCE_DAYS := 5
 # Power. Everything that draws power asks for kW; sources supply it 8 times a day (3 hours a step).
 # Cheapest sources run first: sun, then the grid, then batteries, then generators by fuel price.
 # Short on power? Racks and coolers all run at the fraction that's covered.
-const RACK_KW := 6.0
+const RACK_KW := 6.0  # a Basic rack; better tiers multiply it (see RACKS)
 const SOLAR_KW := 2.0  # a rooftop Solar Panel at noon
 # Solar panels on the ground, outdoors. kw: output at noon. size: tiles wide and deep.
 const SOLAR_ARRAYS := {
@@ -52,7 +52,14 @@ const INDOOR_TEMP := 72.0
 const OUTDOOR_TEMP := 95.0  # Calizona, in the shade, of which there is none
 const MAX_TEMP := 150.0
 const HEAT_STEPS_PER_DAY := 8
-const RACK_HEAT := 12.0  # heat a rack adds each step, spread over the room's floor tiles
+const RACK_HEAT := 12.0  # heat a Basic rack adds each step, spread over the room's floor tiles
+# Server rack tiers. compute, heat and power multiply a Basic rack's. Better racks pack more compute
+# into a tile but run hotter and hungrier than they are fast. Deviation per rack follows its compute.
+const RACKS := {
+	"rack": {"compute": 1.0, "heat": 1.0, "power": 1.0},
+	"rack_improved": {"compute": 2.0, "heat": 2.5, "power": 2.5},
+	"rack_advanced": {"compute": 4.0, "heat": 6.0, "power": 6.0},
+}
 # Outside heat seeps in through the walls; insulation cuts that by a percentage.
 const OUTSIDE_LEAK := 0.004
 const WALLS := {  # exterior wall tiers
@@ -174,7 +181,9 @@ const TOOLS := [
 	{"id": "iwall", "name": "Interior Wall", "layer": "sub", "cost": 300, "drag": "paint", "cat": "structure"},
 	{"id": "door", "name": "Door", "layer": "wall", "cost": 2500, "drag": "single", "cat": "structure"},
 	{"id": "desk", "name": "Desk", "layer": "object", "cost": 6000, "drag": "paint", "cat": "furniture"},
-	{"id": "rack", "name": "Server Rack", "layer": "object", "cost": 100000, "drag": "paint", "cat": "compute"},
+	{"id": "rack", "name": "Basic Server Rack", "layer": "object", "cost": 100000, "drag": "paint", "cat": "compute"},
+	{"id": "rack_improved", "name": "Improved Server Rack", "layer": "object", "cost": 250000, "drag": "paint", "cat": "compute"},
+	{"id": "rack_advanced", "name": "Advanced Server Rack", "layer": "object", "cost": 600000, "drag": "paint", "cat": "compute"},
 	{"id": "ficus", "name": "Ficus", "layer": "object", "cost": 300, "drag": "paint", "cat": "furniture"},
 	{"id": "coffee", "name": "Coffee Maker", "layer": "sub", "cost": 1500, "drag": "paint", "cat": "furniture"},
 	{"id": "redteam", "name": "Red-Team Rig", "layer": "object", "cost": 40000, "drag": "paint", "cat": "safety"},
@@ -713,7 +722,7 @@ func _tool_cost(tool: Dictionary) -> int:
 	var mult := 1.0
 	if tool.get("cat", "") == "structure":
 		mult -= _research_bonus("structure_discount")
-	if tool.id == "rack":
+	if RACKS.has(tool.id):
 		mult -= _research_bonus("rack_discount")
 	return roundi(tool.cost * mult)
 
@@ -904,7 +913,7 @@ func _update_heat_tab() -> void:
 		var racks := 0
 		var coolers := 0
 		for t in bld.tiles:
-			if objects.get(t) == "rack":
+			if RACKS.has(objects.get(t, "")):
 				racks += 1
 			coolers += int(COOLERS.has(roof_objects.get(t, ""))) + int(window_objects.has(t))
 		lines.append("%d°F   %d tiles, %d racks, %d coolers" % [bld.temp, bld.area, racks, coolers])
@@ -918,7 +927,7 @@ func _update_heat_tab() -> void:
 			cool_power += COOLERS[c[1]].power
 	heat_label.text = ("Rooms:\n%s\n\nRack compute lost to heat: %.1f of %d\nStaff productivity: %d%%\nCooling power: %d kW\n\n"
 		+ "Raised by: racks\nLowered by: AC Units, Window ACs, bigger rooms") % [
-		"\n".join(lines) if not lines.is_empty() else "none", _racks() - _rack_compute(), _racks(), int(prod * 100.0),
+		"\n".join(lines) if not lines.is_empty() else "none", _rack_max_compute() - _rack_compute(), _rack_max_compute(), int(prod * 100.0),
 		cool_power]
 
 
@@ -977,7 +986,7 @@ func _update_deviation_tab() -> void:
 	fill.bg_color = Color(0.35, 0.75, 0.4) if deviation < 25.0 else (Color(0.9, 0.7, 0.2) if deviation < 50.0 \
 		else (Color(0.95, 0.45, 0.2) if deviation < 75.0 else Color(0.9, 0.2, 0.25)))
 	dev_bar.add_theme_stylebox_override("fill", fill)
-	var lines := ["%d racks x %.0f a year = %.2f" % [_racks(), DEVIATION_PER_RACK, _racks() * DEVIATION_PER_RACK]]
+	var lines := ["%d racks (%.0f Basic-rack worth) x %.0f a year = %.2f" % [_racks(), _rack_max_compute(), DEVIATION_PER_RACK, _rack_max_compute() * DEVIATION_PER_RACK]]
 	for m in _deviation_mods():
 		lines.append("  %s: %+d%%" % [m[0], roundi(m[1] * 100.0)])
 	for c in _deviation_counters():
@@ -1516,9 +1525,27 @@ func _new_day() -> void:
 func _racks() -> int:
 	var n := 0
 	for t in objects:
-		if objects[t] == "rack":
+		if RACKS.has(objects[t]):
 			n += 1
 	return n
+
+
+# What all racks would give if none were throttled, in Basic racks.
+func _rack_max_compute() -> float:
+	var c := 0.0
+	for t in objects:
+		if RACKS.has(objects[t]):
+			c += RACKS[objects[t]].compute
+	return c
+
+
+# Sum of a per-tier field (heat, power) over all racks, in Basic racks.
+func _rack_sum(field: String) -> float:
+	var v := 0.0
+	for t in objects:
+		if RACKS.has(objects[t]):
+			v += RACKS[objects[t]][field]
+	return v
 
 
 # Each engineer tending a rack adds half a rack's worth of compute. Hot racks throttle.
@@ -1529,8 +1556,8 @@ func _compute_per_day() -> float:
 func _rack_compute() -> float:
 	var c := 0.0
 	for t in objects:
-		if objects[t] == "rack":
-			c += _rack_output(t)
+		if RACKS.has(objects[t]):
+			c += _rack_output(t) * RACKS[objects[t]].compute
 	return c
 
 
@@ -1686,7 +1713,7 @@ func _deviation_per_year() -> float:
 	var mult := 1.0
 	for m in _deviation_mods():
 		mult += m[1]
-	var rate := _racks() * DEVIATION_PER_RACK * maxf(mult, 0.0)
+	var rate := _rack_max_compute() * DEVIATION_PER_RACK * maxf(mult, 0.0)
 	for c in _deviation_counters():
 		rate -= c[1]
 	return rate
@@ -1714,7 +1741,7 @@ func _tick_deviation() -> void:
 			music.set_tension(tension)
 	if deviation >= 25.0:
 		for t in objects:
-			if objects[t] == "rack" and not rack_names.has(t):
+			if RACKS.has(objects[t]) and not rack_names.has(t):
 				rack_names[t] = RACK_NICKNAMES[_hash(t) % RACK_NICKNAMES.size()]
 	if deviation >= 50.0 and day % 20 == 0:
 		rival_sabotage = mini(rival_sabotage + 3, rival[3] / 2)
@@ -1833,7 +1860,7 @@ func _after_build() -> void:
 		s.path = PackedVector2Array()
 		s.working = false
 		# Lose the workstation if it was demolished or its spot got blocked.
-		if s.seat != NO_SEAT and (objects.get(s.seat) != JOBS[s.job].at or not _walkable(s.spot)):
+		if s.seat != NO_SEAT and (_station_kind(objects.get(s.seat, "")) != JOBS[s.job].at or not _walkable(s.spot)):
 			s.seat = NO_SEAT
 
 
@@ -1894,6 +1921,11 @@ func _workforce(job: String) -> float:
 
 
 # Where someone stands to use a desk or rack: a free walkable neighbor, front side first.
+# What kind of workstation a thing is: every rack tier counts as a "rack".
+func _station_kind(id: String) -> String:
+	return "rack" if RACKS.has(id) else id
+
+
 func _station_spot(t: Vector2i, kind: String) -> Vector2i:
 	var sides := [Vector2i.UP, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.DOWN] if kind == "desk" \
 		else [Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP]
@@ -1908,7 +1940,7 @@ func _find_station(s: Dictionary, here: Vector2i) -> void:
 	var kind: String = JOBS[s.job].at
 	var best_len := 1 << 30
 	for t in objects:
-		if objects[t] != kind or staff.any(func(o): return o.seat == t):
+		if _station_kind(objects[t]) != kind or staff.any(func(o): return o.seat == t):
 			continue
 		var spot := _station_spot(t, kind)
 		if spot == NO_SEAT:
@@ -1955,7 +1987,7 @@ func _update_staff(delta: float) -> void:
 # --- Power and pollution ----------------------------------------------------
 
 func _power_demand() -> float:
-	var kw := _racks() * RACK_KW * (1.0 + _research_bonus("rack_power"))
+	var kw := _rack_sum("power") * RACK_KW * (1.0 + _research_bonus("rack_power"))
 	for c in _coolers():
 		kw += COOLERS[c[1]].power
 	kw += objects.values().count("redteam") * REDTEAM_KW
@@ -2094,8 +2126,8 @@ func _tick_heat() -> void:
 	added.resize(buildings.size())
 	added.fill(0.0)
 	for t in objects:
-		if objects[t] == "rack" and room_of.has(t):
-			added[room_of[t]] += RACK_HEAT * power_ratio * (1.0 + _research_bonus("rack_heat"))
+		if RACKS.has(objects[t]) and room_of.has(t):
+			added[room_of[t]] += RACK_HEAT * RACKS[objects[t]].heat * power_ratio * (1.0 + _research_bonus("rack_heat"))
 	for c in _coolers():
 		var t: Vector2i = c[0]
 		if COOLERS.has(c[1]) and room_of.has(t):
@@ -2120,7 +2152,7 @@ func _tick_heat() -> void:
 		s.productivity = clampf(1.0 - maxf(over, 0.0) * HEAT_PRODUCTIVITY_LOSS, 0.2, 1.0) + comfy
 	if not _heat_warned:
 		for t in objects:
-			if objects[t] == "rack" and _temp(t) > RACK_SAFE_TEMP + 10.0:
+			if RACKS.has(objects[t]) and _temp(t) > RACK_SAFE_TEMP + 10.0:
 				_heat_warned = true
 				_chet("Bro, the server room is %d degrees. The racks are thermal throttling. Put an AC Unit on the roof (R in Build). Heat (H) shows the hot rooms." % _temp(t))
 				break
@@ -2144,7 +2176,7 @@ func _draw_heat_tint() -> void:
 
 func _draw_rack_temps() -> void:
 	for t in objects:
-		if objects[t] == "rack" and _rack_output(t) < 1.0:
+		if RACKS.has(objects[t]) and _rack_output(t) < 1.0:
 			draw_string(ThemeDB.fallback_font, Vector2(t) * TILE + Vector2(2, -26), "%d%%" % int(_rack_output(t) * 100.0),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 0.35, 0.3))
 	for bld in buildings:  # each room's temperature on its first floor tile
@@ -2340,7 +2372,7 @@ func _describe_hover() -> String:
 		var sub: String = sub_objects.get(hover_sub, "")
 		if id != "" and id != "part":
 			lines.append(_tool_by_id(id).get("name", id.capitalize()))
-			if id == "rack":
+			if RACKS.has(id):
 				if rack_names.has(t) and deviation >= 25.0:
 					lines[0] += ' "%s"' % rack_names[t]
 				lines.append("Output: %d%%" % int(_rack_output(t) * 100.0))
@@ -2362,9 +2394,10 @@ func _describe_hover() -> String:
 
 # What a kind of thing does to heat, cooling, power and smog, for its tooltip.
 func _effects(id: String) -> Array:
-	if id == "rack":
-		return ["Heat: +%.1f to its room" % (RACK_HEAT * (1.0 + _research_bonus("rack_heat"))),
-			"Power: uses %.1f kW" % (RACK_KW * (1.0 + _research_bonus("rack_power")))]
+	if RACKS.has(id):
+		return ["Compute: %.0f" % RACKS[id].compute,
+			"Heat: +%.1f to its room" % (RACK_HEAT * RACKS[id].heat * (1.0 + _research_bonus("rack_heat"))),
+			"Power: uses %.1f kW" % (RACK_KW * RACKS[id].power * (1.0 + _research_bonus("rack_power")))]
 	if WALLS.has(id):
 		return ["Insulation: %d%%" % int(WALLS[id].insulation * 100.0)]
 	if COOLERS.has(id):
@@ -2465,7 +2498,7 @@ func _draw() -> void:
 				call("_draw_" + objects[item], Vector2(item) * TILE, item)
 	if _heat_view():
 		_draw_rack_temps()
-	if deviation >= 25.0 and objects.get(hover) == "rack" and rack_names.has(hover) and view_level == 0:
+	if deviation >= 25.0 and RACKS.has(objects.get(hover, "")) and rack_names.has(hover) and view_level == 0:
 		var at := Vector2(hover) * TILE + Vector2(-34, -20)  # the name the AI gave this rack
 		draw_string_outline(ThemeDB.fallback_font, at, rack_names[hover], HORIZONTAL_ALIGNMENT_CENTER, TILE + 68, 12, 4, Color.BLACK)
 		draw_string(ThemeDB.fallback_font, at, rack_names[hover], HORIZONTAL_ALIGNMENT_CENTER, TILE + 68, 12, Color(0.75, 1.0, 0.8))
@@ -2560,16 +2593,30 @@ func _draw_desk(p: Vector2, _t: Vector2i) -> void:
 	draw_rect(Rect2(p + Vector2(9, -2), Vector2(14, 8)), Color(0.45, 0.75, 1.0))
 
 
+# Better tiers are taller, with a colored stripe and more blinking lights.
 func _draw_rack(p: Vector2, t: Vector2i) -> void:
+	var tier := ["rack", "rack_improved", "rack_advanced"].find(objects.get(t, "rack"))
+	var h := 22 + tier * 6
 	_ellipse(p + Vector2(18, 28), 14, 4, Color(0, 0, 0, 0.25))
-	_box(Rect2(p + Vector2(4, 8), Vector2(24, 22)), 22, Color(0.32, 0.33, 0.37), Color(0.08, 0.08, 0.1))
-	var tick := int(_time * 5.0)
+	_box(Rect2(p + Vector2(4, 8), Vector2(24, 22)), h, Color(0.32, 0.33, 0.37), Color(0.08, 0.08, 0.1))
+	if tier > 0:
+		var stripe := Color(0.3, 0.6, 1.0) if tier == 1 else Color(0.75, 0.4, 1.0)
+		draw_rect(Rect2(p + Vector2(4, 8 - h), Vector2(24, 3)), stripe)
+	var tick := int(_time * (5.0 + tier * 4.0))
 	for i in 4:
 		var y := p.y + 10 + i * 5
 		draw_line(Vector2(p.x + 7, y + 2), Vector2(p.x + 21, y + 2), Color(0.25, 0.25, 0.3))
 		var on := _hash(t, i * 1000 + tick) % 3 != 0
 		var lit := Color(1.0, 0.25, 0.2) if deviation >= 50.0 else Color(0.3, 1.0, 0.5)
 		draw_rect(Rect2(Vector2(p.x + 23, y), Vector2(3, 3)), lit if on else lit.darkened(0.7))
+
+
+func _draw_rack_improved(p: Vector2, t: Vector2i) -> void:
+	_draw_rack(p, t)
+
+
+func _draw_rack_advanced(p: Vector2, t: Vector2i) -> void:
+	_draw_rack(p, t)
 
 
 func _draw_redteam(p: Vector2, t: Vector2i) -> void:
