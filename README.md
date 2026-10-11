@@ -20,7 +20,7 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 - Name your company when the game starts.
 - Server Racks give compute (1 per rack per day). The **Models** tab on the right trains a Small, Medium or Large model; bigger ones take longer and cost more, and each new model builds on your best one.
 - When a model ships, users flock to it. Revenue is simply users x $0.05 a day.
-- Rival labs (ClosedAI, Gogle, Metta) release models on a fixed script. Falling behind their best model costs you users.
+- Rival labs (ClosedAI, Algorithmic, MassiveHard) release models on a fixed script. Falling behind their best model costs you users.
 
 ## Staff
 - The **Staff** tab hires Researchers, Engineers and Marketers ($5,000 recruiter fee, then a daily salary). Firing costs 5 days of salary.
