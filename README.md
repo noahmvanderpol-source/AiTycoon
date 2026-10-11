@@ -6,7 +6,7 @@ A satirical tycoon/base-building game about running an AI startup. Built with Go
 Open Godot, choose **Import**, select this folder's `project.godot`, then press **F5**.
 
 ## Controls (prototype)
-You start with a small office in the Calizona desert, $100,000 and two founders paid in equity who wander around.
+You start with a small office in the Calizona desert, $2M and two staff who wander around.
 - `1`-`8` or the bottom bar: Carpet, Concrete, Wall, Door, Desk, Server Rack, Ficus, Coffee Maker
 - Each tile has a 2x2 subgrid. Small items (like the Coffee Maker) snap to a quarter tile, so four fit on one tile
 - `X`: Demolish tool (50% refund). Right click also demolishes one tile.
@@ -26,7 +26,8 @@ You start with a small office in the Calizona desert, $100,000 and two founders 
 - The **Staff** tab hires Researchers, Engineers and Marketers ($5,000 recruiter fee, then a daily salary). Firing costs 5 days of salary.
 - Pick each person's job from their dropdown. They walk to a free workstation and get to work (a little busy bubble shows over their head):
   - **Research** at a desk: trains models faster (+25% each).
-  - **Engineering** at a server rack: +0.5 compute each.
+  - **Engineering** at an Engineer's Workstation (Build > Furniture, $15,000): up to 5 engineers work anywhere within 4 tiles of it, and each tends a server rack in that radius for +0.5 compute. Hover a workstation (or place one) to see its radius and the racks it covers.
+  - **Wear and tear:** every rack has a condition from 0 to 100% that scales its output (shown as a bar above the rack once it drops). Racks nobody maintains lose 0.5% a day, down to 25%. Each engineer at a workstation maintains up to 4 racks in its radius and restores 5% a day.
   - **Growth** at a desk: +20% users each.
   - **Slack off**: wanders around.
 - Anyone can do any job, but off-role they work at half speed. No free desk or rack means no work, so build more.
@@ -36,7 +37,7 @@ You start with a small office in the Calizona desert, $100,000 and two founders 
 - At the quarter's end there's a board meeting. Hit the target: +15 Board Confidence. Miss: -25 (-10 in the first quarter).
 - **Fired** if Board Confidence hits 0% or your money goes below $0.
 - **You win?** when a model reaches capability 100 and replaces you as CEO.
-- The **Board** tab shows confidence, the current target, progress and days left.
+- Click your **company name** in the top bar (or press **O**) to open the **Company page**. Its **Board** tab shows confidence, the current target, progress and days left. The **Policies** tab is a placeholder for company decisions coming later.
 
 ## Compute and Deviation
 - **Compute** (top bar) comes from racks (heat throttles them) and engineers. Red-Team Rigs eat some first; training gets the rest, sped up by researchers. The Models tab shows the breakdown.
