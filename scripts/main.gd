@@ -241,6 +241,7 @@ var camera: Camera2D
 var top_label: Label
 var chet_label: Label
 var cost_label: Label
+var hover_tip: Label  # says what's under the mouse
 var tool_buttons := []
 var level_button: Button
 var speed_buttons := []
@@ -452,6 +453,14 @@ func _build_ui() -> void:
 	_build_power_tab()
 	_build_deviation_tab()
 	_build_guide_tab()
+
+	hover_tip = Label.new()
+	hover_tip.add_theme_font_size_override("font_size", 13)
+	var tip_style := _panel_style(0.9)
+	tip_style.set_content_margin_all(6)
+	hover_tip.add_theme_stylebox_override("normal", tip_style)
+	hover_tip.visible = false
+	layer.add_child(hover_tip)
 
 	cost_label = Label.new()
 	cost_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -970,6 +979,7 @@ func _process(delta: float) -> void:
 		bld.alpha = move_toward(bld.alpha, 0.0 if hide else 1.0, delta * 5.0)
 	_update_hud()
 	_update_cost_label()
+	_update_hover_tip()
 	queue_redraw()
 
 
@@ -1964,6 +1974,62 @@ func _draw_roof_ac(p: Vector2, a: float) -> void:  # because it's Calizona
 
 func _hash(t: Vector2i, salt := 0) -> int:
 	return absi(hash(Vector3i(t.x, t.y, salt)))
+
+
+# --- Hover info ---------------------------------------------------------------
+
+func _update_hover_tip() -> void:
+	var text := "" if dragging or modal or _mouse_over_ui() else _describe_hover()
+	hover_tip.visible = text != ""
+	if text == "":
+		return
+	hover_tip.text = text
+	hover_tip.reset_size()
+	var p := get_viewport().get_mouse_position() + Vector2(16, 18)
+	var screen := get_viewport_rect().size
+	hover_tip.position = p.clamp(Vector2.ZERO, screen - hover_tip.size)
+
+
+# What's under the mouse, top-most first, with a stat or two.
+func _describe_hover() -> String:
+	var mouse := get_global_mouse_position()
+	if view_level == 0:
+		for s in staff:
+			if s.pos.distance_to(mouse - Vector2(0, 8)) < 12.0:
+				return "%s, %s\nJob: %s\nProductivity: %d%%" % [s.name, ROLES[s.role].name, JOBS[s.job].name, int(s.productivity * 100.0)]
+	var t := hover
+	if not _in_bounds(t):
+		return ""
+	var lines := []
+	if view_level == 1:
+		if roof_objects.has(t):
+			lines.append(_tool_by_id(roof_objects[t]).name)
+			if COOLERS.has(roof_objects[t]):
+				lines.append("Cools the room below, uses %d kW" % COOLERS[roof_objects[t]].power)
+		elif room_of.has(t):
+			lines.append("Roof")
+	else:
+		var id: String = objects.get(t, "")
+		var sub: String = sub_objects.get(hover_sub, "")
+		if id != "" and id != "part":
+			lines.append(_tool_by_id(id).get("name", id.capitalize()))
+			if id == "rack":
+				if rack_names.has(t) and deviation >= 25.0:
+					lines[0] += ' "%s"' % rack_names[t]
+				lines.append("Output: %d%%" % int(_rack_output(t) * 100.0))
+			elif GENERATORS.has(id):
+				lines.append("Makes up to %d kW" % GENERATORS[id].kw)
+		elif sub != "":
+			lines.append(_tool_by_id(sub).get("name", sub.capitalize()))
+		elif window_objects.has(t):
+			lines.append("%s on a wall, uses %d kW" % [COOLERS[window_objects[t]].name, COOLERS[window_objects[t]].power])
+		elif wall_tiles.has(t):
+			lines.append(_tool_by_id(wall_tiles[t]).name)
+		elif floor_tiles.has(t):
+			lines.append(_tool_by_id(floor_tiles[t]).name + " floor")
+	if room_of.has(t):
+		lines.append("Room: %d°F" % int(buildings[room_of[t]].temp))
+	return "\n".join(lines)
 
 
 func _update_cost_label() -> void:
