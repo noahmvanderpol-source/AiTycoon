@@ -2004,8 +2004,7 @@ func _describe_hover() -> String:
 	if view_level == 1:
 		if roof_objects.has(t):
 			lines.append(_tool_by_id(roof_objects[t]).name)
-			if COOLERS.has(roof_objects[t]):
-				lines.append("Cools the room below, uses %d kW" % COOLERS[roof_objects[t]].power)
+			lines.append_array(_effects(roof_objects[t]))
 		elif room_of.has(t):
 			lines.append("Roof")
 	else:
@@ -2017,12 +2016,12 @@ func _describe_hover() -> String:
 				if rack_names.has(t) and deviation >= 25.0:
 					lines[0] += ' "%s"' % rack_names[t]
 				lines.append("Output: %d%%" % int(_rack_output(t) * 100.0))
-			elif GENERATORS.has(id):
-				lines.append("Makes up to %d kW" % GENERATORS[id].kw)
+			lines.append_array(_effects(id))
 		elif sub != "":
 			lines.append(_tool_by_id(sub).get("name", sub.capitalize()))
 		elif window_objects.has(t):
-			lines.append("%s on a wall, uses %d kW" % [COOLERS[window_objects[t]].name, COOLERS[window_objects[t]].power])
+			lines.append(COOLERS[window_objects[t]].name)
+			lines.append_array(_effects(window_objects[t]))
 		elif wall_tiles.has(t):
 			lines.append(_tool_by_id(wall_tiles[t]).name)
 		elif floor_tiles.has(t):
@@ -2030,6 +2029,28 @@ func _describe_hover() -> String:
 	if room_of.has(t):
 		lines.append("Room: %d°F" % int(buildings[room_of[t]].temp))
 	return "\n".join(lines)
+
+
+# What a kind of thing does to heat, cooling, power and smog, for its tooltip.
+func _effects(id: String) -> Array:
+	if id == "rack":
+		return ["Heat: +%.1f to its room" % (RACK_HEAT),
+			"Power: uses %.1f kW" % (RACK_KW)]
+	if COOLERS.has(id):
+		return ["Cooling: %d" % int(COOLERS[id].cooling), "Power: uses %d kW" % COOLERS[id].power]
+	if GENERATORS.has(id):
+		var g: Dictionary = GENERATORS[id]
+		return ["Power: makes up to %d kW" % g.kw, "Fuel: $%.2f per kWh" % g.fuel, "Smog: %.2f per kWh" % g.smog]
+	match id:
+		"redteam":
+			return ["Power: uses %d kW" % REDTEAM_KW, "Eats %.1f compute a day" % REDTEAM_COMPUTE, "Deviation: -%.1f a year" % REDTEAM_ALIGN]
+		"solar":
+			return ["Power: makes up to %d kW in the sun" % SOLAR_KW, "Smog: none"]
+		"battery":
+			return ["Stores %d kWh, %d kW in or out" % [BATTERY_KWH, BATTERY_KW]]
+		"grid":
+			return ["Power: up to %d kW at $%.2f per kWh" % [GRID_KW, GRID_PRICE], "Smog: someone else's problem"]
+	return []
 
 
 func _update_cost_label() -> void:
