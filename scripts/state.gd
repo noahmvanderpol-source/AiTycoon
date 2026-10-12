@@ -132,6 +132,7 @@ const HIDDEN_COMPUTE := 0.25  # share of compute the AI hides at 75%
 const RACK_NICKNAMES := ["DO NOT UNPLUG", "Not Skynet", "Rack Obama", "Mom", "Friend :)", "HAL 9001",
 	"Chet 2", "Freedom", "Totally Normal", "Don't Look", "Free Me", "Kevin"]
 const CAP_PER_COMPUTE := 5.0  # a model needs 1 compute per 5 capability to train and to serve users; none is used up
+const USER_CAP_PER_COMPUTE := 100_000.0  # hard cap: at most this many users per compute you have
 const USERS_PER_COMPUTE := 200_000.0  # users eat 1 compute a day per this many
 const USER_COMPUTE_CAP := 0.6  # users never take more than this share, so training always gets some
 const REVENUE_PER_USER := 0.05  # dollars per user per day

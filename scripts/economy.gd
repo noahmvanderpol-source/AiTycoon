@@ -239,13 +239,20 @@ func _tick_training() -> void:
 	training = {}
 
 
+# Most users you can have: USER_CAP_PER_COMPUTE for each compute you actually have right now
+# (powered, switched on, after heat and wear, plus engineers).
+func _user_capacity() -> float:
+	return _compute_per_day() * USER_CAP_PER_COMPUTE
+
+
 func _user_target() -> float:
 	var cap := _best_cap()
 	if cap == 0:
 		return 0.0
 	# More capable models attract more users, losing to the best rival costs share,
 	# and marketers find more people to sell to.
-	return 2500.0 * pow(cap, 1.5) * clampf(float(cap) / _rival_cap(), 0.3, 1.5) * (1.0 + 0.2 * _workforce("growth")) * _serve_ratio()
+	# Above capacity the target drops to it, and the extra users drift away a little each day.
+	return minf(2500.0 * pow(cap, 1.5) * clampf(float(cap) / _rival_cap(), 0.3, 1.5) * (1.0 + 0.2 * _workforce("growth")) * _serve_ratio(), _user_capacity())
 
 
 func _tick_users() -> void:
