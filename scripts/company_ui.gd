@@ -28,10 +28,10 @@ func _build_models_tab() -> void:
 func _update_models_tab() -> void:
 	var best := "none yet" if models.is_empty() else "%s (capability %d)" % [models.back().name, models.back().cap]
 	var hidden := "\n  Hidden by the AI: -%.1f (it says it's fine)" % (_compute_per_day() * HIDDEN_COMPUTE) if deviation >= 75.0 else ""
-	models_label.text = ("Best model: %s\nUsers: %s\nRevenue: %s/day\nCompute: %.1f per day\n  %d racks: %.1f\n  Engineers: %.1f\n  Red-team rigs: -%.1f%s\n"
+	models_label.text = ("Best model: %s\nUsers: %s\nRevenue: %s/day\nCompute: %.1f per day\n  %d racks: %.1f\n  Engineers: %.1f\n  Red-team rigs: -%.1f\n  Users: -%.1f%s\n"
 		+ "Training: %.1f, x%.2f research = %.1f per day\nTop rival: %s %s (capability %d)") % [
 		best, _num(int(users)), _money(revenue_today), _compute_per_day(), _racks(), _rack_compute(), _engineer_compute(),
-		_redteam_compute(), hidden, _training_compute(), _research_mult(), _training_speed(), rival[1], rival[2], _rival_cap()]
+		_redteam_compute(), _user_compute(), hidden, _training_compute(), _research_mult(), _training_speed(), rival[1], rival[2], _rival_cap()]
 	var serving := ""
 	if _best_cap() > 0:
 		serving = "\nServing %s needs %.1f compute%s" % [models.back().name, _compute_needed(_best_cap()),
@@ -39,7 +39,7 @@ func _update_models_tab() -> void:
 	models_label.text += serving
 	var compute := _training_speed()
 	if training.is_empty():
-		train_label.text = "Nothing training. Pick a size:" if _racks() > 0 else "Build a Server Rack to train models."
+		train_label.text = ("Nothing training. Pick a size (cost x%.2f this year):" % _train_inflation()) if _racks() > 0 else "Build a Server Rack to train models."
 		train_bar.visible = false
 	else:
 		var days_left := "?" if compute <= 0.0 else str(ceili((training.work - training.done) / _training_speed()))
@@ -55,6 +55,7 @@ func _update_models_tab() -> void:
 		var cap := _best_cap() + int(size.gain)
 		train_buttons[i].text = "Train %s   %s\nNeeds %.1f compute   ~%s days\n+%d capability   +%d%% Deviation rate" % [
 			size.name, _money(_train_cost(i)), _compute_needed(cap), days, size.gain, roundi(_train_mod(i, rush_check.button_pressed) * 100.0)]
+		train_buttons[i].tooltip_text = _train_inflation_text() + "\nIt gets dearer every year, so train while it's cheap."
 		train_buttons[i].disabled = not training.is_empty() or _train_cost(i) > money or not _can_train(cap)
 
 

@@ -26,10 +26,22 @@ func _grid_kw() -> float:
 	return GRID_KW + gov.grid_bonus()
 
 
+# Racks that are switched on. A rack switched off makes no compute, heat, power draw, Deviation or wear.
+func _rack_on(t: Vector2i) -> bool:
+	return RACKS.has(objects.get(t, "")) and not racks_off.has(t) and not racks_hot.has(t)
+
+
+func _toggle_rack(t: Vector2i) -> void:
+	if racks_off.has(t):
+		racks_off.erase(t)
+	elif RACKS.has(objects.get(t, "")):
+		racks_off[t] = true
+
+
 func _racks() -> int:
 	var n := 0
 	for t in objects:
-		if RACKS.has(objects[t]):
+		if _rack_on(t):
 			n += 1
 	return n
 
@@ -38,7 +50,7 @@ func _racks() -> int:
 func _rack_max_compute() -> float:
 	var c := 0.0
 	for t in objects:
-		if RACKS.has(objects[t]):
+		if _rack_on(t):
 			c += RACKS[objects[t]].compute
 	return c
 
@@ -47,7 +59,7 @@ func _rack_max_compute() -> float:
 func _rack_sum(field: String) -> float:
 	var v := 0.0
 	for t in objects:
-		if RACKS.has(objects[t]):
+		if _rack_on(t):
 			v += RACKS[objects[t]][field]
 	return v
 
@@ -72,7 +84,7 @@ func _engineer_compute() -> float:
 			if s.working and s.job == "engineering" and s.seat == st:
 				crew += (1.0 if s.role == "engineer" else 0.5) * s.productivity
 		crew *= 1.0 + _research_bonus("productivity")
-		var racks := objects.keys().filter(func(r): return RACKS.has(objects[r]) and _in_eng_radius(st, r)).size()
+		var racks := objects.keys().filter(func(r): return _rack_on(r) and _in_eng_radius(st, r)).size()
 		total += ENG_RACK_BONUS * minf(crew, racks)
 	return minf(total, ENG_RACK_BONUS * _racks())
 
@@ -86,8 +98,8 @@ func _rack_compute() -> float:
 
 
 func _rack_output(t: Vector2i) -> float:
-	if not _reachable(t):
-		return 0.0  # nobody can get to it to keep it running
+	if not _reachable(t) or racks_off.has(t) or racks_hot.has(t):
+		return 0.0  # switched off, or nobody can get to it to keep it running
 	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * (0.0 if not _powered(t) else 1.0) \
 		* (1.0 + _research_bonus("compute")) * _rack_cond(t) / 100.0
 
@@ -108,7 +120,7 @@ func _maintained_racks() -> Dictionary:
 			if s.working and s.job == "engineering" and s.seat == st:
 				crew += (1.0 if s.role == "engineer" else 0.5) * s.productivity
 		var slots := int(ceilf(crew * ENG_MAINT_RACKS))
-		var near: Array = objects.keys().filter(func(r): return RACKS.has(objects[r]) and _in_eng_radius(st, r) and not done.has(r))
+		var near: Array = objects.keys().filter(func(r): return _rack_on(r) and _in_eng_radius(st, r) and not done.has(r))
 		near.sort_custom(func(a, b): return Vector2(a - st).length() < Vector2(b - st).length())
 		for r in near.slice(0, slots):
 			done[r] = true
@@ -119,7 +131,7 @@ func _tick_wear() -> void:
 	var fixed := _maintained_racks()
 	var worn := 0
 	for t in objects:
-		if not RACKS.has(objects[t]):
+		if not _rack_on(t):
 			continue
 		var c := _rack_cond(t)
 		c = minf(c + RACK_REPAIR, 100.0) if fixed.has(t) else maxf(c - RACK_WEAR, RACK_MIN_COND)
@@ -129,6 +141,9 @@ func _tick_wear() -> void:
 	for t in rack_cond.keys():  # forget racks that were demolished
 		if not RACKS.has(objects.get(t, "")):
 			rack_cond.erase(t)
+	for t in racks_off.keys():
+		if not RACKS.has(objects.get(t, "")):
+			racks_off.erase(t)
 	if worn > 0 and day % 15 == 0:
 		_chet("%d rack%s held together with zip ties. Put engineers at a Workstation near them, bro." % [worn, "" if worn == 1 else "s"])
 
@@ -213,14 +228,24 @@ func _revenue_text() -> String:
 	return "\n".join(lines)
 
 
-# Compute is spent in this order: red-team rigs, then whatever the AI hides at 75%, then training.
+# Compute is spent in this order: red-team rigs, users, then whatever the AI hides at 75%, then training.
 func _redteam_compute() -> float:
 	var rigs := objects.keys().filter(func(r): return objects[r] == "redteam" and _powered(r)).size()
 	return minf(rigs * REDTEAM_COMPUTE, _compute_per_day())
 
 
+# Users eat compute every day. They take up to USER_COMPUTE_CAP of what's left after the rigs.
+func _user_compute_demand() -> float:
+	return users / USERS_PER_COMPUTE
+
+
+func _user_compute() -> float:
+	var free := maxf(_compute_per_day() - _redteam_compute(), 0.0)
+	return minf(_user_compute_demand(), free * USER_COMPUTE_CAP)
+
+
 func _training_compute() -> float:
-	var c := _compute_per_day() - _redteam_compute()
+	var c := _compute_per_day() - _redteam_compute() - _user_compute()
 	if deviation >= 75.0:
 		c -= _compute_per_day() * HIDDEN_COMPUTE
 	return maxf(c, 0.0)
@@ -247,7 +272,11 @@ func _can_train(cap: int) -> bool:
 # Share of users the best model can serve: all of them with enough compute, fewer without.
 func _serve_ratio() -> float:
 	var need := _compute_needed(_best_cap())
-	return 1.0 if need <= 0.0 else clampf(_compute_per_day() / need, 0.0, 1.0)
+	var r := 1.0 if need <= 0.0 else clampf(_compute_per_day() / need, 0.0, 1.0)
+	var demand := _user_compute_demand()  # users who don't get their share of compute drift away
+	if demand > 0.0:
+		r *= clampf(_user_compute() / demand, 0.0, 1.0)
+	return r
 
 
 func _best_cap() -> int:
@@ -256,11 +285,20 @@ func _best_cap() -> int:
 
 # Each step up the capability ladder costs more money and a lot more compute.
 func _train_cost(i: int) -> int:
-	return int(MODEL_SIZES[i].cost * pow(1.035, _best_cap()))
+	return int(MODEL_SIZES[i].cost * pow(1.035, _best_cap()) * _train_inflation())
 
 
 func _train_work(i: int) -> float:
-	return MODEL_SIZES[i].work * pow(1.05, _best_cap())
+	return MODEL_SIZES[i].work * pow(1.05, _best_cap()) * _train_inflation()
+
+
+# Training prices and compute needs creep up every year (smoothly, from the game date, so saves just work).
+func _train_inflation() -> float:
+	return pow(1.0 + TRAIN_RISE, float(day - 1) / DAYS_PER_YEAR)
+
+
+func _train_inflation_text() -> String:
+	return "Training cost and compute x%.2f (year %d, +%d%% a year)" % [_train_inflation(), (day - 1) / DAYS_PER_YEAR + 1, roundi(TRAIN_RISE * 100.0)]
 
 
 # How much a training run raises the Deviation rate while it runs.
