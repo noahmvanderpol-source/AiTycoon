@@ -31,7 +31,7 @@ func _heat_view() -> bool:
 func _tick_heat() -> void:
 	var rack_heat := RACK_HEAT * (1.0 + _research_bonus("rack_heat"))
 	for t in objects:
-		if RACKS.has(objects[t]) and _indoor(t) and _powered(t):
+		if RACKS.has(objects[t]) and _indoor(t) and _powered(t) and not racks_off.has(t):
 			_set_temp(t, _temp(t) + rack_heat * RACKS[objects[t]].heat)
 	for c in _coolers():
 		if _powered(c[0], c[2]):

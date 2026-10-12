@@ -157,7 +157,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and event.pressed:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
-				if build_row.visible and _in_bounds(hover):
+				if not build_row.visible and RACKS.has(objects.get(hover, "")):
+					_toggle_rack(hover)  # click a rack to switch it off or on
+				elif build_row.visible and _in_bounds(hover):
 					dragging = true
 					drag_start = hover
 					paint_tiles.clear()

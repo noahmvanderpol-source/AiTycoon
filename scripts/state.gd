@@ -349,6 +349,7 @@ var deviation := 0.0
 var dev_level := 0  # thresholds already announced: 1 = 25%, 2 = 50%, 3 = 75%
 var rival_sabotage := 0  # capability the AI has quietly knocked off the top rival
 var rack_cond := {}  # Vector2i -> rack condition 0-100 (missing = 100)
+var racks_off := {}  # Vector2i -> true for racks the player switched off
 var rack_names := {}  # Vector2i -> nickname the AI gave a rack
 var theater_quarter := -1  # last quarter a safety blog post went out
 var tension := false

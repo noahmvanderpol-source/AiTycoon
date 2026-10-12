@@ -202,7 +202,7 @@ func _draw_rack(p: Vector2, t: Vector2i) -> void:
 	for i in 4:
 		var y := p.y + 10 + i * 5
 		draw_line(Vector2(p.x + 7, y + 2), Vector2(p.x + 21, y + 2), Color(0.25, 0.25, 0.3))
-		var on := _hash(t, i * 1000 + tick) % 3 != 0
+		var on := _hash(t, i * 1000 + tick) % 3 != 0 and not racks_off.has(t)
 		var lit := Color(1.0, 0.25, 0.2) if deviation >= 50.0 else Color(0.3, 1.0, 0.5)
 		draw_rect(Rect2(Vector2(p.x + 23, y), Vector2(3, 3)), lit if on else lit.darkened(0.7))
 	var cond := _rack_cond(t)
@@ -210,6 +210,12 @@ func _draw_rack(p: Vector2, t: Vector2i) -> void:
 		var col := Color(0.4, 0.9, 0.4) if cond >= 75.0 else (Color(1.0, 0.65, 0.2) if cond >= 50.0 else Color(1.0, 0.3, 0.25))
 		draw_rect(Rect2(p + Vector2(4, 3 - h), Vector2(24, 3)), Color(0, 0, 0, 0.5))
 		draw_rect(Rect2(p + Vector2(4, 3 - h), Vector2(24.0 * cond / 100.0, 3)), col)
+	if racks_off.has(t):  # switched off: dimmed, with a red power symbol on top
+		draw_rect(Rect2(p + Vector2(4, 8 - h), Vector2(24, 22 + h)), Color(0, 0, 0, 0.35))
+		var c := p + Vector2(16, 20 - h)  # on the top face, so a rack in front can't hide it
+		draw_circle(c, 8, Color(0.85, 0.2, 0.15))
+		draw_arc(c, 5, -PI * 0.3, PI * 1.3, 16, Color(1, 1, 1), 1.5)
+		draw_line(c + Vector2(0, -7), c + Vector2(0, -1), Color(1, 1, 1), 1.5)
 
 
 # A yellow lightning bolt next to every machine that got no power.

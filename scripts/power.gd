@@ -16,6 +16,8 @@ func _machines() -> Array:
 		out.append([Vector3i(c[0].x, c[0].y, c[2]), COOLERS[c[1]].power * (1.0 + _research_bonus("cooler_power"))])
 	for t in objects:
 		if RACKS.has(objects[t]):
+			if racks_off.has(t):
+				continue
 			out.append([Vector3i(t.x, t.y, 0), RACKS[objects[t]].power * RACK_KW * (1.0 + _research_bonus("rack_power"))])
 		elif objects[t] == "redteam":
 			out.append([Vector3i(t.x, t.y, 0), REDTEAM_KW])

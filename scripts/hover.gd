@@ -47,7 +47,10 @@ func _describe_hover() -> String:
 			if RACKS.has(id):
 				if rack_names.has(t) and deviation >= 25.0:
 					lines[0] += ' "%s"' % rack_names[t]
-				lines.append("Output: %d%%" % int(_rack_output(t) * 100.0))
+				if racks_off.has(t):
+					lines.append("Disabled. Click it with Build closed to turn it on.")
+				else:
+					lines.append("Output: %d%%   (click with Build closed to turn off)" % int(_rack_output(t) * 100.0))
 				lines.append("Condition: %d%%%s" % [int(_rack_cond(t)), "" if _maintained_racks().has(t) else " (no engineer)"])
 			lines.append_array(_effects(id))
 			if _needs_access(id) and not _reachable(anchor):

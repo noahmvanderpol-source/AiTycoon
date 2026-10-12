@@ -25,10 +25,22 @@ func _grid_kw() -> float:
 	return GRID_KW + gov.grid_bonus()
 
 
+# Racks that are switched on. A rack switched off makes no compute, heat, power draw, Deviation or wear.
+func _rack_on(t: Vector2i) -> bool:
+	return RACKS.has(objects.get(t, "")) and not racks_off.has(t)
+
+
+func _toggle_rack(t: Vector2i) -> void:
+	if racks_off.has(t):
+		racks_off.erase(t)
+	elif RACKS.has(objects.get(t, "")):
+		racks_off[t] = true
+
+
 func _racks() -> int:
 	var n := 0
 	for t in objects:
-		if RACKS.has(objects[t]):
+		if _rack_on(t):
 			n += 1
 	return n
 
@@ -37,7 +49,7 @@ func _racks() -> int:
 func _rack_max_compute() -> float:
 	var c := 0.0
 	for t in objects:
-		if RACKS.has(objects[t]):
+		if _rack_on(t):
 			c += RACKS[objects[t]].compute
 	return c
 
@@ -46,7 +58,7 @@ func _rack_max_compute() -> float:
 func _rack_sum(field: String) -> float:
 	var v := 0.0
 	for t in objects:
-		if RACKS.has(objects[t]):
+		if _rack_on(t):
 			v += RACKS[objects[t]][field]
 	return v
 
@@ -71,7 +83,7 @@ func _engineer_compute() -> float:
 			if s.working and s.job == "engineering" and s.seat == st:
 				crew += (1.0 if s.role == "engineer" else 0.5) * s.productivity
 		crew *= 1.0 + _research_bonus("productivity")
-		var racks := objects.keys().filter(func(r): return RACKS.has(objects[r]) and _in_eng_radius(st, r)).size()
+		var racks := objects.keys().filter(func(r): return _rack_on(r) and _in_eng_radius(st, r)).size()
 		total += ENG_RACK_BONUS * minf(crew, racks)
 	return minf(total, ENG_RACK_BONUS * _racks())
 
@@ -85,8 +97,8 @@ func _rack_compute() -> float:
 
 
 func _rack_output(t: Vector2i) -> float:
-	if not _reachable(t):
-		return 0.0  # nobody can get to it to keep it running
+	if not _reachable(t) or racks_off.has(t):
+		return 0.0  # switched off, or nobody can get to it to keep it running
 	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * (0.0 if not _powered(t) else 1.0) \
 		* (1.0 + _research_bonus("compute")) * _rack_cond(t) / 100.0
 
@@ -107,7 +119,7 @@ func _maintained_racks() -> Dictionary:
 			if s.working and s.job == "engineering" and s.seat == st:
 				crew += (1.0 if s.role == "engineer" else 0.5) * s.productivity
 		var slots := int(ceilf(crew * ENG_MAINT_RACKS))
-		var near: Array = objects.keys().filter(func(r): return RACKS.has(objects[r]) and _in_eng_radius(st, r) and not done.has(r))
+		var near: Array = objects.keys().filter(func(r): return _rack_on(r) and _in_eng_radius(st, r) and not done.has(r))
 		near.sort_custom(func(a, b): return Vector2(a - st).length() < Vector2(b - st).length())
 		for r in near.slice(0, slots):
 			done[r] = true
@@ -118,7 +130,7 @@ func _tick_wear() -> void:
 	var fixed := _maintained_racks()
 	var worn := 0
 	for t in objects:
-		if not RACKS.has(objects[t]):
+		if not _rack_on(t):
 			continue
 		var c := _rack_cond(t)
 		c = minf(c + RACK_REPAIR, 100.0) if fixed.has(t) else maxf(c - RACK_WEAR, RACK_MIN_COND)
@@ -128,6 +140,9 @@ func _tick_wear() -> void:
 	for t in rack_cond.keys():  # forget racks that were demolished
 		if not RACKS.has(objects.get(t, "")):
 			rack_cond.erase(t)
+	for t in racks_off.keys():
+		if not RACKS.has(objects.get(t, "")):
+			racks_off.erase(t)
 	if worn > 0 and day % 15 == 0:
 		_chet("%d rack%s held together with zip ties. Put engineers at a Workstation near them, bro." % [worn, "" if worn == 1 else "s"])
 
