@@ -50,6 +50,7 @@ const ASKS := [
 	{"id": "tax", "name": "Tech Tax Break", "by": LEGISLATURE, "favor": 35, "cost": 0, "max": 1,
 		"desc": "10% of your daily burn back"},
 ]
+const PRICE_RISE := 0.25  # every price here goes up 25% a year, as politicians learn what we're worth
 const GRID_PER_PERMIT := 40.0
 const CONTRACT_PER_DAY := 1000
 const CONTRACT_DAYS := 182
@@ -80,6 +81,7 @@ var cards := []  # per politician: {name, pet, favor, favor_label, scandal, scan
 var ask_buttons := {}  # ask id -> Button
 var ask_labels := {}  # ask id -> Label
 var line_chart: Control
+var price_label: Label
 var bar_chart: Control
 
 
@@ -101,6 +103,12 @@ func influence() -> float:
 	for p in politicians:
 		total += p.favor
 	return total / politicians.size()
+
+
+# Today's price of something that cost `base` in year one, rounded to $500.
+func price(base: int) -> int:
+	var years: float = float(main.day - 1) / main.DAYS_PER_YEAR
+	return int(round(base * (1.0 + PRICE_RISE * years) / 500.0)) * 500
 
 
 func grid_bonus() -> float:
@@ -200,11 +208,12 @@ func _scandal(i: int) -> void:
 
 func donate(i: int) -> void:
 	var p: Dictionary = politicians[i]
-	if main.money < p.price:
+	var cost := price(p.price)
+	if main.money < cost:
 		main._chet("We can't afford to be that generous to %s right now." % p.name)
 		return
-	main.money -= p.price
-	spend[-1] += p.price
+	main.money -= cost
+	spend[-1] += cost
 	last_donation_day = main.day
 	p.favor = minf(p.favor + (LOBBY_FAVOR if i == LEGISLATURE else DONATION_FAVOR), 100.0)
 	if i == LEGISLATURE:
@@ -217,10 +226,11 @@ func donate(i: int) -> void:
 func ask(id: String) -> void:
 	var a: Dictionary = ASKS.filter(func(x): return x.id == id)[0]
 	var p: Dictionary = politicians[a.by]
-	if granted[id] >= a.max or p.favor < a.favor or main.money < a.cost:
+	var cost := price(a.cost)
+	if granted[id] >= a.max or p.favor < a.favor or main.money < cost:
 		return
-	main.money -= a.cost
-	spend[-1] += a.cost
+	main.money -= cost
+	spend[-1] += cost
 	p.favor -= a.favor
 	granted[id] += 1
 	match id:
@@ -248,10 +258,12 @@ func refresh() -> void:
 	if not page.visible:
 		return
 	var inf := influence()
+	price_label.text = "Lobbying prices +%d%% since %d (+%d%% a year)    " % [
+		roundi((price(10_000) / 10_000.0 - 1.0) * 100.0), main.START_YEAR, PRICE_RISE * 100]
 	_set_meter("influence", inf, "Influence %d" % inf,
 		"Raised by: donations, happy pet issues\nLowered by: time, asking favors, unhappy pet issues, scandals")
 	_set_meter("outrage", main.world.outrage, "Outrage %d" % main.world.outrage,
-		"Raised by: smog on houses and farmhouses\nLowered by: time, clean air")
+		"Raised by: smog on houses and farmhouses, building on farmland, water use\nLowered by: time, clean air")
 	_set_meter("scrutiny", scrutiny, "Scrutiny %d" % scrutiny,
 		"Raised by: Outrage, Deviation, scandals\nLowered by: time, Influence\nFines from %d, contract pulled at %d" % [FINE_FROM, CONTRACT_PULL])
 	for i in politicians.size():
@@ -265,14 +277,14 @@ func refresh() -> void:
 		c.favor_label.text = "Favor %d" % p.favor
 		c.scandal.value = p.scandal
 		c.scandal_label.text = "Scandal %d" % p.scandal
-		c.donate.text = "%s %s" % ["Lobby" if i == LEGISLATURE else "Donate", main._money(p.price)]
-		c.donate.disabled = main.money < p.price
+		c.donate.text = "%s %s" % ["Lobby" if i == LEGISLATURE else "Donate", main._money(price(p.price))]
+		c.donate.disabled = main.money < price(p.price)
 	for a in ASKS:
 		var p: Dictionary = politicians[a.by]
 		var b: Button = ask_buttons[a.id]
 		var maxed: bool = granted[a.id] >= a.max
-		b.disabled = maxed or p.favor < a.favor or main.money < a.cost
-		b.text = "%s%s" % [a.name, "" if a.cost == 0 else "  (%s)" % main._money(a.cost)]
+		b.disabled = maxed or p.favor < a.favor or main.money < price(a.cost)
+		b.text = "%s%s" % [a.name, "" if a.cost == 0 else "  (%s)" % main._money(price(a.cost))]
 		var status := ""
 		match a.id:
 			"grid":
@@ -357,6 +369,10 @@ func _build_page() -> void:
 	title.add_theme_font_size_override("font_size", 28)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
+	price_label = _small("", 14)
+	price_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	price_label.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75))
+	head.add_child(price_label)
 	var close := Button.new()
 	close.text = "Close (L)"
 	close.focus_mode = Control.FOCUS_NONE
