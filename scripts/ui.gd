@@ -182,7 +182,7 @@ const GUIDE := [
 	["Desks and break rooms", "Productivity runs 0-100%. Staff start at 80%. A Basic Desk adds 5%, an Advanced Desk (2x1) 10%, a Cubicle (2x2) 15%; place a better desk on an old one to upgrade it. Carpet adds 3%. Break room things (Coffee Maker, Microwave, Mini-Fridge, Counter with Sink, Table, Chair, Garbage Can) each add 1-3% for everyone in the same building, up to 12%. Coffee Makers and Microwaves can go on top of a counter. Heat takes it away."],
 	["Amenities", "Every worker needs a kitchen and a bathroom. A kitchenette (Counter with Sink plus a Microwave or Mini-Fridge) covers 10 workers, a Toilet Stall 5, a Bathroom Sink 10. Fall short and everyone's productivity drops in proportion to how many go without: up to 15% for kitchens, 15% for stalls, 5% for sinks."],
 	["Staff (T)", "Hire researchers, engineers, marketers, alignment researchers and mechanics, then give each a job. You don't control people directly: they need a free desk, a spot at an Engineer's Workstation, or (for Maintenance) floor next to a generator, and heat makes them slower. Anyone set to Slack off still collects half their pay. Mechanics on Maintenance keep generators in shape: each looks after up to 3 generators within 6 tiles, and an unmaintained generator slowly loses output."],
-	["Board (O)", "Click your company name in the top bar (or press O) for the Company page. Its Board tab: each quarter the board sets a target. Hit it for +15 confidence, miss it for -25. At 0% you're fired, and running out of money gets you fired faster. Safety theater fools them for a while."],
+	["Company page (O)", "Click your company name in the top bar (or press O) for the Company page. Its Board tab: each quarter the board sets a target. Hit it for +15 confidence, miss it for -25. At 0% you're fired, and running out of money gets you fired faster. Safety theater fools them for a while."],
 	["Heat (H)", "Racks heat their own tile and the heat radiates out across the room. Walls slow it and keep some desert heat out (better walls more). Hot racks throttle and hot staff slow down. An AC Unit on the roof cools a 7x7 area and cancels out about 4 racks; a Window AC on a wall cools the 3x3 next to it and handles about one. Put coolers near the racks. Tiles are tinted by temperature while the Heat panel is open."],
 	["Power (P)", "Racks, ACs and red-team rigs use power. The cheapest power runs first: solar, then the grid, then batteries, then generators by fuel price. Batteries store spare solar for the night. The grid hookup is capped until you lobby for more. Generators go outside, and their smog drifts across the map."],
 	["Deviation (V)", "Every rack adds Deviation, and training, cutting corners and smarter models raise the rate. Alignment researchers at desks and Red-Team Rigs bring it back down (rigs eat compute). At 25% the AI gets quirky, at 50% it sabotages rivals for you and scandals follow, at 75% it hides compute, lies on reports and staff quit. At 100% it takes over."],
@@ -521,9 +521,6 @@ func _toggle_menu(id: String) -> void:
 		if gov.page.visible:
 			company_page.visible = false
 			research_page.visible = false
-	elif id == "board":
-		_toggle_company_page(0)
-		return
 	else:
 		company_page.visible = false  # side panels open over the map, not under the Company page
 		var m: Dictionary = MENUS.filter(func(x): return x.id == id)[0]
@@ -543,8 +540,6 @@ func _refresh_menu_buttons() -> void:
 			open = research_page.visible
 		elif m.id == "government":
 			open = gov.page.visible
-		elif m.id == "board":
-			open = company_page.visible and company_tabs.current_tab == 0
 		menu_buttons[m.id].button_pressed = open
 
 

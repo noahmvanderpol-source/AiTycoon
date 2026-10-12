@@ -422,13 +422,12 @@ var cat_buttons := {}  # build category id -> Button
 var menu_buttons := {}  # menu id -> Button
 
 # The menu row along the bottom. Panels open from here by click or hotkey; add new ones to this list.
-# "tab" is the index of the panel in the right-hand side panel; build opens the build bar and
-# board opens the Company page (also opened by clicking the company name in the top bar).
+# "tab" is the index of the panel in the right-hand side panel; build opens the build bar. The Company page
+# (board and policies) has no button here: click the company name in the top bar, or press O (see main.gd).
 const MENUS := [
 	{"id": "build", "name": "Build", "key": KEY_B},
 	{"id": "models", "name": "Models", "key": KEY_M, "tab": 0},
 	{"id": "staff", "name": "Staff", "key": KEY_T, "tab": 1},
-	{"id": "board", "name": "Board", "key": KEY_O},
 	{"id": "heat", "name": "Heat", "key": KEY_H, "tab": 2},
 	{"id": "power", "name": "Power", "key": KEY_P, "tab": 3},
 	{"id": "deviation", "name": "Deviation", "key": KEY_V, "tab": 4},

@@ -129,6 +129,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			if event.keycode == m.key:
 				_toggle_menu(m.id)
 				return
+		if event.keycode == KEY_O:  # the Company page has no menu button; its name in the top bar opens it too
+			_toggle_company_page(0)
+			return
 		var shown := _level_tools()
 		if not build_row.visible:
 			shown = []
