@@ -58,8 +58,6 @@ func _tick_heat() -> void:
 			_cool_around(c[0], COOLERS[c[1]])
 	for i in HEAT_PASSES:
 		_spread_heat()
-	for t in heat_cells:
-		_set_temp(t, _temp(t) + (INDOOR_TEMP - _temp(t)) * HEAT_LEAK)
 	for bld in buildings:  # room averages, for the Heat panel and labels
 		var total := 0.0
 		for t in bld.tiles:

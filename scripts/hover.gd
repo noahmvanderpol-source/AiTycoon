@@ -142,7 +142,7 @@ const TOOL_NOTES := {
 	"concrete": ["Proper floor. Fills a dragged box", "Carpet goes on top of it"],
 	"carpet": ["Goes on concrete", "Staff standing on it work 3% better"],
 	"iwall": ["Blocks walking and takes a quarter tile", "Set an Interior Door into it so staff can pass"],
-	"idoor": ["Stands in a line of Interior Wall, or on its own", "Staff can walk through it", "Replaces the wall piece it is placed on"],
+	"idoor": ["A full tile wide, set into a line of Interior Wall", "Staff can walk through it", "Replaces the wall pieces it is placed on"],
 	"door": ["Stands in an outside wall", "Staff walk through it"],
 	"ficus": ["Decoration. Morale boost: 0%", "Investors love it though"],
 	"chair": ["Face it at a table"],
@@ -157,7 +157,7 @@ func _tool_tip(tool: Dictionary) -> String:
 	var foot: Vector2i = _footprint(id, Vector2i.ZERO).back() + Vector2i.ONE
 	match layer:
 		"sub":
-			lines.append("Size: one subgrid square (a quarter tile)")
+			lines.append("Size: one tile wide" if id == "idoor" else "Size: one subgrid square (a quarter tile)")
 		"floor", "wall":
 			lines.append("Size: 1 tile")
 		"object":

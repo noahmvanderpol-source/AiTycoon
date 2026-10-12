@@ -539,32 +539,52 @@ func _draw_iwall(p: Vector2) -> void:  # p is the top-left of a 16x16 subgrid ce
 		draw_line(top + Vector2(SUB, 0), top + Vector2(SUB, bottom), edge, 1.5)
 
 
-# A door set into a partition: the same wall piece with a wooden door in its front, or seen edge-on
-# in a wall that runs north to south.
+# A door set into a partition is a full tile wide: two cells, each drawn as one leaf of a double door.
+# Amber top and floor swing arcs make it easy to find with the roofs off.
 func _draw_idoor(p: Vector2) -> void:
 	var c := Vector2i((p / SUB).round())
-	var wood := Color(0.62, 0.43, 0.25)
-	var along_x := _iwall_at(c + Vector2i.LEFT) or _iwall_at(c + Vector2i.RIGHT)
-	var top_c := Color(0.86, 0.85, 0.8)
+	var wood := Color(0.72, 0.46, 0.2)
+	var amber := Color(0.95, 0.72, 0.25)
+	var frame := Color(0.3, 0.2, 0.12)
 	var front_c := Color(0.62, 0.62, 0.6)
 	var edge := Color(0.2, 0.19, 0.21)
 	var top := p - Vector2(0, WALL_H)
-	draw_rect(Rect2(top, Vector2(SUB, SUB)), top_c)  # the top of the frame, running the whole way across
-	if along_x or not _iwall_at(c + Vector2i.UP) and not _iwall_at(c + Vector2i.DOWN):
-		draw_rect(Rect2(p + Vector2(0, SUB - WALL_H), Vector2(SUB, 6)), front_c)  # wall above the door
-		draw_rect(Rect2(p + Vector2(2, SUB - WALL_H + 6), Vector2(SUB - 4, WALL_H - 6)), wood)  # the door
-		draw_rect(Rect2(p + Vector2(2, SUB - WALL_H + 6), Vector2(SUB - 4, WALL_H - 6)), wood.darkened(0.35), false, 1.0)
-		draw_circle(p + Vector2(SUB - 5, SUB - WALL_H * 0.4), 1.3, Color(0.9, 0.8, 0.4))
-		draw_rect(Rect2(p + Vector2(0, SUB - WALL_H), Vector2(2, WALL_H)), front_c)
-		draw_rect(Rect2(p + Vector2(SUB - 2, SUB - WALL_H), Vector2(2, WALL_H)), front_c)
-		draw_line(top, top + Vector2(SUB, 0), edge, 1.5)
-	else:
-		draw_rect(Rect2(p + Vector2(0, SUB - WALL_H), Vector2(3, WALL_H)), front_c)
-		draw_rect(Rect2(p + Vector2(SUB - 3, SUB - WALL_H), Vector2(3, WALL_H)), front_c)
-		draw_rect(Rect2(p + Vector2(SUB / 2.0 - 1.5, 0), Vector2(3, SUB)), wood)  # the door, swung open
-		draw_circle(p + Vector2(SUB / 2.0, 4), 1.2, Color(0.9, 0.8, 0.4))
+	var horiz: bool = sub_objects.get(c + Vector2i.LEFT, "") == "idoor" and c.x % 2 == 1 \
+		or sub_objects.get(c + Vector2i.RIGHT, "") == "idoor" and c.x % 2 == 0
+	var vert: bool = sub_objects.get(c + Vector2i.UP, "") == "idoor" and c.y % 2 == 1 \
+		or sub_objects.get(c + Vector2i.DOWN, "") == "idoor" and c.y % 2 == 0
+	if vert and not horiz:
+		var first: bool = c.y % 2 == 0
+		draw_rect(Rect2(p + Vector2(SUB / 2.0 - 5, 0), Vector2(10, SUB)), Color(amber.r, amber.g, amber.b, 0.35))  # floor mat
+		draw_rect(Rect2(top, Vector2(SUB, SUB)), amber)
 		draw_line(top, top + Vector2(0, SUB), edge, 1.5)
 		draw_line(top + Vector2(SUB, 0), top + Vector2(SUB, SUB), edge, 1.5)
+		if first:
+			draw_line(top, top + Vector2(SUB, 0), frame, 2.0)
+		else:
+			draw_line(top + Vector2(0, SUB), top + Vector2(SUB, SUB), frame, 2.0)
+			draw_rect(Rect2(p + Vector2(0, SUB - WALL_H), Vector2(3, WALL_H)), front_c)
+			draw_rect(Rect2(p + Vector2(SUB - 3, SUB - WALL_H), Vector2(3, WALL_H)), front_c)
+		draw_rect(Rect2(p + Vector2(SUB / 2.0 - 1.5, 0), Vector2(3, SUB)), wood)  # the leaves, swung open
+		draw_circle(p + Vector2(SUB / 2.0, SUB / 2.0), 1.2, Color(0.95, 0.85, 0.4))
+		return
+	var first: bool = c.x % 2 == 0
+	var hinge_x := 1.0 if first else SUB - 1.0
+	draw_rect(Rect2(p + Vector2(0, SUB), Vector2(SUB, 4)), Color(amber.r, amber.g, amber.b, 0.45))  # threshold mat
+	draw_arc(p + Vector2(hinge_x, SUB), SUB - 3, 0.0 if first else PI / 2, PI / 2 if first else PI, 8, Color(1, 1, 1, 0.7), 1.0)  # swing
+	draw_rect(Rect2(top, Vector2(SUB, SUB)), amber)  # the top of the frame
+	draw_line(top, top + Vector2(SUB, 0), frame, 2.0)
+	draw_line(top + Vector2(0, SUB), top + Vector2(SUB, SUB), frame, 1.0)
+	draw_line(top + Vector2(0 if first else SUB, 0), top + Vector2(0 if first else SUB, SUB), frame, 2.0)
+	draw_rect(Rect2(p + Vector2(0, SUB - WALL_H), Vector2(SUB, 5)), front_c)  # wall above the door
+	var x0 := 2.0 if first else 0.0
+	var w := SUB - 2.0
+	draw_rect(Rect2(p + Vector2(x0, SUB - WALL_H + 5), Vector2(w, WALL_H - 5)), wood)  # the leaf
+	draw_rect(Rect2(p + Vector2(x0, SUB - WALL_H + 5), Vector2(w, WALL_H - 5)), frame, false, 1.0)
+	draw_circle(p + Vector2(SUB - 3 if first else 3, SUB - WALL_H * 0.4), 1.3, Color(0.95, 0.85, 0.4))
+	draw_rect(Rect2(p + Vector2(0 if first else SUB - 2, SUB - WALL_H), Vector2(2, WALL_H)), frame)  # door post
+
+
 func _draw_coffee(p: Vector2) -> void:
 	# p is the top-left of a 16x16 subgrid cell.
 	_ellipse(p + Vector2(8, 14), 7, 2.5, Color(0, 0, 0, 0.2))
@@ -624,6 +644,10 @@ func _draw_held_preview() -> void:
 			call("_draw_" + id, at, place_rot)
 		elif sub:
 			call("_draw_" + id, at)
+		elif tool.get("layer") == "window":  # hung on a wall: takes an opacity
+			call("_draw_" + id, at, 1.0)
+		elif tool.get("layer") == "wall":  # doors take just their tile
+			call("_draw_" + id, cell)
 		else:
 			call("_draw_" + id, at, cell)
 	var foot := Vector2(_footprint(id, Vector2i.ZERO).back() + Vector2i.ONE)

@@ -84,7 +84,6 @@ const GEN_GROUND := {
 	"gen_large": ["asphalt", "concrete"],
 	"power_plant": ["asphalt", "concrete"],
 }
-const HEAT_LEAK := 0.01  # how fast a tile drifts back to room temperature on its own
 const RACK_SAFE_TEMP := 85.0  # racks throttle above this
 const RACK_THROTTLE := 0.015  # compute lost per degree over, down to RACK_MIN_OUTPUT
 const RACK_MIN_OUTPUT := 0.2
@@ -116,7 +115,7 @@ const FURNITURE_SIZE := {"counter": Vector2i(2, 1)}  # big furniture that isn't 
 # Window ACs hang on a wall and cancel out about one rack. Rooftop AC Units cancel out about 4.
 # New coolers (chillers, heat pumps, water cooling) go here.
 const COOLERS := {
-	"window_ac": {"name": "Window AC", "cooling": 18.0, "target": 66.0, "power": 2.0, "radius": 2},  # power in kW
+	"window_ac": {"name": "Window AC", "cooling": 21.0, "target": 66.0, "power": 2.0, "radius": 2},  # power in kW
 	"ac": {"name": "AC Unit", "cooling": 50.0, "target": 64.0, "power": 5.0, "radius": 3},
 	# Water cooling: a chiller on a pipe loop pulls heat straight out of the racks the loop touches
 	# (see _cool_water). `cooling` is shared by those racks, at most WATER_RACK_MAX each.
@@ -398,7 +397,7 @@ var wall_tiles := {}  # Vector2i -> "wall" / "door"
 var objects := {}  # Vector2i -> "desk" / "rack" / "ficus"
 var sub_objects := {}  # subgrid cell Vector2i -> "coffee"
 
-var money := 250_000
+var money := 150_000
 var company := "Untitled AI"
 var models := []  # released, best last: [{name, cap, day}]
 var training := {}  # in progress: {name, cap, work, done}

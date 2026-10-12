@@ -43,6 +43,26 @@ func _countertop_free(c: Vector2i) -> bool:
 	return not sub_objects.has(Vector2i(c.x, c.y - c.y % 2)) and not sub_objects.has(Vector2i(c.x, c.y - c.y % 2 + 1))
 
 
+# An Interior Door is a full tile wide: two subgrid cells along the line of the wall it sits in.
+func _door_cells(c: Vector2i) -> Array:
+	var tl := _tile_of_sub(c)
+	var wall := func(n: Vector2i) -> bool: return sub_objects.get(n, "") in ["iwall", "idoor"]
+	var hx: bool = wall.call(c + Vector2i.LEFT) or wall.call(c + Vector2i.RIGHT)
+	var vy: bool = wall.call(c + Vector2i.UP) or wall.call(c + Vector2i.DOWN)
+	if vy and not hx:
+		return [Vector2i(c.x, tl.y * 2), Vector2i(c.x, tl.y * 2 + 1)]
+	return [Vector2i(tl.x * 2, c.y), Vector2i(tl.x * 2 + 1, c.y)]
+
+
+# The other half of an existing door.
+func _door_partner(c: Vector2i) -> Vector2i:
+	for o in [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.UP, Vector2i.DOWN]:
+		var n: Vector2i = c + o
+		if _tile_of_sub(n) == _tile_of_sub(c) and sub_objects.get(n, "") == "idoor":
+			return n
+	return c
+
+
 func _subs_in(t: Vector2i) -> Array:
 	var out := []
 	for o in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)]:
@@ -75,7 +95,7 @@ func _can_place(id: String, t: Vector2i) -> bool:
 		var tile := _tile_of_sub(t)
 		if id == "idoor":  # swaps in for a piece of partition, or stands on its own
 			return _in_bounds(tile) and floor_tiles.has(tile) and not wall_tiles.has(tile) \
-				and not objects.has(tile) and sub_objects.get(t, "iwall") == "iwall"
+				and not objects.has(tile) and _door_cells(t).all(func(d): return sub_objects.get(d, "iwall") == "iwall")
 		if id in COUNTERTOP and _counter_at(tile) != NO_SEAT:
 			return _countertop_free(t)
 		return _in_bounds(tile) and floor_tiles.has(tile) and not wall_tiles.has(tile) \
@@ -222,7 +242,13 @@ func _commit(tiles: Array, free := false) -> void:  # free: putting down somethi
 						layer[f] = "part"
 						layer_parts[f] = t
 			"sub":
-				if sub_objects.has(t) and not free:  # a door replacing a bit of partition
+				if tool.id == "idoor":  # both halves, replacing the bits of partition under them
+					for d in _door_cells(t):
+						if sub_objects.has(d) and not free:
+							money += int(_tool_by_id(sub_objects[d]).cost / 2)
+						sub_objects[d] = "idoor"
+					continue
+				if sub_objects.has(t) and not free:
 					money += int(_tool_by_id(sub_objects[t]).cost / 2)
 				sub_objects[t] = tool.id
 				sub_rot.erase(t)
@@ -253,6 +279,10 @@ func _pick_up(t: Vector2i, c: Vector2i) -> void:
 					roof_parts.erase(f)
 	elif sub_objects.has(c):
 		h = {"id": sub_objects[c], "origin": c, "rot": sub_rot.get(c, 0)}
+		if sub_objects[c] == "idoor":
+			var pr := _door_partner(c)
+			h.origin = Vector2i(mini(c.x, pr.x), mini(c.y, pr.y))
+			sub_objects.erase(pr)
 		sub_objects.erase(c)
 		sub_rot.erase(c)
 	elif objects.has(t) and objects.get(parts.get(t, t), "part") != "part":
@@ -336,7 +366,11 @@ func _demolish(t: Vector2i, at_sub := NO_SEAT) -> void:
 	if subs.has(at_sub):
 		subs = [at_sub]
 	if not subs.is_empty():
+		if sub_objects[subs[0]] == "idoor" and subs.size() == 1:
+			subs.append(_door_partner(subs[0]))
 		for c in subs:
+			if not sub_objects.has(c):
+				continue
 			money += int(_tool_by_id(sub_objects[c]).cost / 2)
 			sub_objects.erase(c)
 			sub_rot.erase(c)

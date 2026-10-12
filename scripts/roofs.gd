@@ -94,7 +94,7 @@ func _find_buildings() -> void:
 		if not _is_wall(t):
 			heat_cells.append(t)
 			if not was_indoor.has(t):
-				_set_temp(t, INDOOR_TEMP)
+				_set_temp(t, outdoor_temp)  # it was outdoors a moment ago
 	for t in was_indoor:
 		if not _indoor(t):
 			_set_temp(t, outdoor_temp)
