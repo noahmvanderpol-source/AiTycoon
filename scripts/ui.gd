@@ -46,6 +46,10 @@ func _build_ui() -> void:
 	top_row.add_child(revenue_label)
 	top_label = Label.new()
 	top_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # wraps to a second line instead of pushing the speed buttons off screen
+	top_label.custom_minimum_size.x = 160
+	top_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	money_label.mouse_filter = Control.MOUSE_FILTER_STOP
 	top_row.add_child(top_label)
 	for s in [0, 1, 2, 4]:
 		var b := Button.new()
@@ -95,6 +99,19 @@ func _build_ui() -> void:
 	roof_button.text = "Shift+R  Roofs: Auto"
 	roof_button.pressed.connect(_toggle_roofs)
 	cat_row.add_child(roof_button)
+	tilt_button = Button.new()
+	tilt_button.focus_mode = Control.FOCUS_NONE
+	tilt_button.text = "Shift+Y  Tilt: Off"
+	tilt_button.tooltip_text = "A slightly tilted ground for a more isometric look. Placement works the same."
+	tilt_button.pressed.connect(_toggle_tilt)
+	cat_row.add_child(tilt_button)
+	move_button = Button.new()
+	move_button.text = "F  Move"
+	move_button.toggle_mode = true
+	move_button.focus_mode = Control.FOCUS_NONE
+	move_button.tooltip_text = "Nothing selected: click an item to pick it up, click again to put it down. Q turns it, right-click puts it back."
+	move_button.pressed.connect(_deselect_tool)
+	cat_row.add_child(move_button)
 	build_popup = PanelContainer.new()
 	build_popup.add_theme_stylebox_override("panel", _panel_style())
 	build_popup.visible = false
@@ -176,17 +193,18 @@ func _build_ui() -> void:
 # How everything works, in one place, so the other panels can stick to numbers.
 const GUIDE := [
 	["Getting started", "You run an AI startup in Calizona. Train models to get users, users bring revenue, and keep the board happy until your AI is smart enough to replace you as CEO. You win? If the board loses all confidence you're fired. If Deviation hits 100% the AI takes over."],
-	["Building (B)", "Open Build and pick a category tab (Tab cycles them). Left drag to build: floors fill a box, walls draw a box outline, furniture paints, doors place one at a time. Right click demolishes for a 50% refund. Furniture needs a floor. Staff walk only on floors and through doors. Desks, Server Racks and Workstations need a clear path, one tile wide, from a door to at least one side; anything blocked in shows a red ! and does nothing until you clear a way. Exterior walls come in three tiers: Cheap, Brick (30% insulation) and Insulated (60%); insulation keeps the desert heat out. Build a better wall over an old one to upgrade it. Carpet goes on concrete and gives staff standing on it +3% productivity. Interior Walls take a quarter tile and block walking. Add on to a building by building new walls against it: rooms that share a wall are one building and lift their roof together. Shift+R keeps every roof off. Press Q while placing a chair to turn it. Right click removes just the small item under the mouse. Generators need ground: the Portable one goes anywhere, the Diesel needs gravel or better, and the Large Diesel and Power Plant need asphalt or concrete."],
+	["Building (B)", "Open Build and pick a category tab (Tab cycles them). Left drag to build: floors fill a box, walls draw a box outline, furniture paints, doors place one at a time. Right click puts your tool away; with nothing selected (F), click an item to pick it up and click again to put it down, Q turns it, right-click puts it back. Demolish (X) refunds half. Small things sit on the subgrid and can be moved square by square; big machines move a whole tile at a time. Furniture needs a floor. Staff walk only on floors and through doors. Desks, Server Racks and Workstations need a clear path, one tile wide, from a door to at least one side; anything blocked in shows a red ! and does nothing until you clear a way. Exterior walls come in three tiers: Cheap, Brick (30% insulation) and Insulated (60%); insulation keeps the desert heat out. Build a better wall over an old one to upgrade it. Carpet goes on concrete and gives staff standing on it +3% productivity. Interior Walls take a quarter tile and block walking; set an Interior Door into one so staff can pass. Hover an item in the Build list for its stats. Shift+Y tilts the ground slightly. Add on to a building by building new walls against it: rooms that share a wall are one building and lift their roof together. Shift+R keeps every roof off. Press Q while placing a chair to turn it. Generators need ground: the Portable one goes anywhere, the Diesel needs gravel or better, and the Large Diesel and Power Plant need asphalt or concrete."],
 	["Roofs and views (R)", "Every enclosed building gets a roof that hides while your mouse is inside it. R switches between Ground and Roof view. Rooftop items like AC Units and Solar Panels switch to Roof view by themselves when you pick them."],
 	["Models (M)", "Server Racks make compute. Pick a model size to train; bigger models take longer and raise capability more. Better models bring more users, and users bring revenue. Cutting corners trains faster but raises Deviation. Engineers at an Engineer's Workstation add compute for racks within its radius. Racks wear down without engineers: each engineer maintains up to 4 racks in range, and a worn rack makes less compute."],
 	["Desks and break rooms", "Productivity runs 0-100%. Staff start at 80%. A Basic Desk adds 5%, an Advanced Desk (2x1) 10%, a Cubicle (2x2) 15%; place a better desk on an old one to upgrade it. Carpet adds 3%. Break room things (Coffee Maker, Microwave, Mini-Fridge, Counter with Sink, Table, Chair, Garbage Can) each add 1-3% for everyone in the same building, up to 12%. Coffee Makers and Microwaves can go on top of a counter. Heat takes it away."],
 	["Amenities", "Every worker needs a kitchen and a bathroom. A kitchenette (Counter with Sink plus a Microwave or Mini-Fridge) covers 10 workers, a Toilet Stall 5, a Bathroom Sink 10. Fall short and everyone's productivity drops in proportion to how many go without: up to 15% for kitchens, 15% for stalls, 5% for sinks."],
 	["Staff (T)", "Hire researchers, engineers, marketers, alignment researchers and mechanics, then give each a job. You don't control people directly: they need a free desk, a spot at an Engineer's Workstation, or (for Maintenance) floor next to a generator, and heat makes them slower. Anyone set to Slack off still collects half their pay. Mechanics on Maintenance keep generators in shape: each looks after up to 3 generators within 6 tiles, and an unmaintained generator slowly loses output."],
 	["Company page (O)", "Click your company name in the top bar (or press O) for the Company page. Its Board tab: each quarter the board sets a target. Hit it for +15 confidence, miss it for -25. At 0% you're fired, and running out of money gets you fired faster. Safety theater fools them for a while."],
-	["Heat (H)", "Racks heat their own tile and the heat radiates out across the room. Walls slow it and keep some desert heat out (better walls more). Hot racks throttle and hot staff slow down. An AC Unit on the roof cools a 7x7 area and cancels out about 4 racks; a Window AC on a wall cools the 3x3 next to it and handles about one. Put coolers near the racks. Tiles are tinted by temperature while the Heat panel is open."],
+	["Heat (H)", "It is hot in Calizona and the temperature outside swings with the seasons (shown by the date). Racks and people heat their own tile and the heat radiates out across the room. Walls slow it down (Cheap 20%, Brick 30%, Insulated 60%, interior walls 10%); an open door lets the desert straight in. Hot racks throttle, and staff sweat and slow down above 78°F. AC Units and Window ACs chill the area around them, strongest right next to the unit, so put them near the racks. The Heat panel tints the rooms from blue (cool) through yellow to red (hot)."],
+	["Water cooling", "A Water Chiller moves heat straight out of racks. Run Cooling Pipes (one subgrid cell each) from the chiller to the back or side of each rack; the front of a rack has no connection. Pipes that touch a rack and join up with a powered chiller form a loop. A chiller takes up to 60 heat a step off the racks on its loop, but gives off 30% of that as heat in its own tile."],
 	["Power (P)", "Racks, ACs and red-team rigs use power. The cheapest power runs first: solar, then the grid, then batteries, then generators by fuel price. Batteries store spare solar for the night. The grid hookup is capped until you lobby for more. Generators go outside, and their smog drifts across the map."],
 	["Deviation (V)", "Every rack adds Deviation, and training, cutting corners and smarter models raise the rate. Alignment researchers at desks and Red-Team Rigs bring it back down (rigs eat compute). At 25% the AI gets quirky, at 50% it sabotages rivals for you and scandals follow, at 75% it hides compute, lies on reports and staff quit. At 100% it takes over."],
-	["Research (E)", "Researchers at desks make research points; the founders make a trickle on their own. Pick a project in each of four branches: Construction, Equipment, Computer Chips and Productivity. Each branch is researched in order. Projects unlock new things in Build or give a lasting bonus. Points keep banking while nothing is picked."],
+	["Research (E)", "Researchers at desks make research points; the founders make a trickle on their own. The tree grows upward from the garage in four branches: Construction, Equipment, Computer Chips and Productivity. A project opens once the ones below it that it connects to are done. Drag the tree to move around it. Projects unlock new things in Build or give a lasting bonus. Points keep banking while nothing is picked."],
 	["Government (L)", "Lobby the state of Calizona. Three politicians each have a price, a pet issue and a scandal meter. The State Legislature takes general lobbying: no scandals, but each donation buys less Favor, and it passes AI-Friendly Regulation (Scrutiny rises half as fast) and a Tech Tax Break (10% of your daily expenses back). Donations raise their Favor but also their Scandal; at 100 Scandal they resign and the replacement starts at 0 Favor. Favor drifts down over time, rises while their pet issue goes your way and falls faster while it doesn't. Influence is the average Favor of all four. Every lobbying price goes up 25% a year. Spend Favor on Grid Hookup Permits (Utilities Commissioner), a State AI Contract for extra revenue (Governor) and Water Rights (Water Board Chair). Scrutiny rises with Outrage, Deviation and scandals, and Influence brings it down. At 50 Scrutiny you're fined at the end of each quarter, and at 75 the state cancels your contract."],
 	["Outrage", "Smog that drifts off your property onto the houses in town or the farmhouses raises Outrage, the more smog the faster. Building on farmland raises it for every tile you pave over, and so does pumping water: the more water you use, the faster it climbs. It slowly fades once things calm down. Hover a house to see its smog. Generators near your fence are the usual cause. Later, community projects on the empty town lots will lower it."],
 	["Speed", "Space pauses. The buttons top right run time at 1x, 2x or 4x. A quarter lasts 15 minutes at 1x. N mutes the music."],
@@ -312,10 +330,10 @@ func _update_heat_tab() -> void:
 		if COOLERS.has(c[1]):
 			cool_power += COOLERS[c[1]].power
 	heat_label.text = ("Rooms:\n%s\n\nRack compute lost to heat: %.1f of %d\nStaff productivity: %d%%\nCooling power: %d kW\n\n"
-		+ "Heat radiates out from racks. Coolers chill the area around them, so put them near the racks.\n"
-		+ "Raised by: racks, the desert through thin walls\nLowered by: AC Units, Window ACs, insulated walls") % [
+		+ "It is %d°F outside. Heat radiates out from racks and people, and cold radiates out from coolers, so put them near the racks.\n"
+		+ "Raised by: racks, people, the desert through walls and open doors\nLowered by: AC Units, Window ACs, Water Chillers, better walls") % [
 		"\n".join(lines) if not lines.is_empty() else "none", _rack_max_compute() - _rack_compute(), _rack_max_compute(), int(prod * 100.0),
-		cool_power]
+		cool_power, int(outdoor_temp)]
 
 
 func _build_power_tab() -> void:
@@ -462,6 +480,16 @@ func _level_tools() -> Array:
 	return out
 
 
+func _apply_zoom() -> void:
+	camera.zoom = Vector2(zoom_level, zoom_level * (TILT_Y if tilt_on else 1.0))
+
+
+func _toggle_tilt() -> void:
+	tilt_on = not tilt_on
+	tilt_button.text = "Shift+Y  Tilt: %s" % ("On" if tilt_on else "Off")
+	_apply_zoom()
+
+
 func _toggle_roofs() -> void:
 	roofs_off = not roofs_off
 	roof_button.text = "Shift+R  Roofs: %s" % ("Off" if roofs_off else "Auto")
@@ -500,6 +528,7 @@ func _label_tools() -> void:
 		var key := "X" if tool.id == "demolish" else str(shown.find(i) + 1)
 		tool_buttons[i].text = "%s  %s" % [key, tool.name] if tool.cost == 0 else "%s  %s  %s" % [key, tool.name, _money(_tool_cost(tool))]
 		tool_buttons[i].visible = shown.has(i)
+		tool_buttons[i].tooltip_text = _tool_tip(tool)
 	_select_tool(shown[0])
 
 
@@ -544,6 +573,10 @@ func _refresh_menu_buttons() -> void:
 
 
 func _select_tool(i: int) -> void:
+	_cancel_held()
+	tool_active = true
+	if move_button:
+		move_button.button_pressed = false
 	tool_index = i
 	dragging = false
 	if TOOLS[i].id != "demolish" and _tool_level(TOOLS[i]) != view_level:
@@ -569,14 +602,18 @@ func _update_hud() -> void:
 	var revenue := "Revenue %s/day" % _money(revenue_today) if models.size() > 0 else "Pre-revenue"
 	company_button.text = company
 	company_title.text = "%s, Calizona" % company
-	money_label.text = "%s  " % _money(money)
-	expenses_label.text = "Expenses %s/day  " % _money(burn)
-	revenue_label.text = revenue + "  "
+	money_label.text = "%s " % _short_money(money)
+	money_label.tooltip_text = "Cash: %s" % _money(money)
+	expenses_label.text = "Exp %s/d " % _short_money(burn)
+	revenue_label.text = ("Rev %s/d " % _short_money(revenue_today)) if models.size() > 0 else "Pre-revenue "
 	expenses_label.tooltip_text = _expenses_text()
 	revenue_label.tooltip_text = _revenue_text()
-	top_label.text = "Users %s  Compute %.1f  Deviation %d%%  Outrage %d%%  Board %d%%  %s, Day %d" % [
-		_num(int(users)), _compute_per_day(), int(deviation), int(world.outrage), confidence,
-		_quarter_name(q), (day - 1) % DAYS_PER_QUARTER + 1]
+	top_label.text = "Users %s  Compute %.1f  Dev %d%%  Outrage %d%%  Board %d%%  %s D%d  %d°F out" % [
+		_short(int(users)), _compute_per_day(), int(deviation), int(world.outrage), confidence,
+		_quarter_name(q), (day - 1) % DAYS_PER_QUARTER + 1, int(outdoor_temp)]
+	top_label.tooltip_text = "Users %s, Deviation %d%%, Outrage %d%%, Board confidence %d%%, outside %d°F" % [_num(int(users)), int(deviation), int(world.outrage), confidence, int(outdoor_temp)]
+	top_label.mouse_filter = Control.MOUSE_FILTER_STOP
+	warn_banner.position.y = top_label.get_parent().get_parent().size.y + 12
 	_update_funds_warning(burn)
 	_update_models_tab()
 	_update_staff_tab()
@@ -619,6 +656,23 @@ func _num(v: int) -> String:
 
 func _money(v: int) -> String:
 	return ("-$" if v < 0 else "$") + _num(absi(v))
+
+
+# Compact numbers for the top bar: 9,999 / 264k / 1.25M / 3.4B.
+func _short(v: int) -> String:
+	var a := absi(v)
+	var sign_s := "-" if v < 0 else ""
+	if a < 10_000:
+		return _num(v)
+	if a < 1_000_000:
+		return sign_s + (("%.1fk" % (a / 1000.0)) if a < 100_000 else "%dk" % (a / 1000)).replace(".0k", "k")
+	if a < 1_000_000_000:
+		return sign_s + ("%.2fM" % (a / 1000000.0))
+	return sign_s + ("%.2fB" % (a / 1000000000.0))
+
+
+func _short_money(v: int) -> String:
+	return ("-$" if v < 0 else "$") + _short(absi(v))
 
 
 # --- Loop and input ---------------------------------------------------------
