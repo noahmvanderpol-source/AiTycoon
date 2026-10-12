@@ -18,7 +18,7 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 
 ## Models
 - Name your company when the game starts.
-- Server Racks give compute (1 per rack per day). The **Models** tab on the right trains a Small, Medium or Large model; bigger ones take longer and cost more, and each new model builds on your best one.
+- Server Racks give compute per day: Basic 1, Improved 3, Advanced 5. The **Models** tab on the right trains a Small, Medium or Large model; bigger ones take longer and cost more, and each new model builds on your best one.
 - When a model ships, users flock to it. Revenue is simply users x $0.05 a day.
 - Rival labs (ClosedAI, Gogle, Metta) release models on a fixed script. Falling behind their best model costs you users.
 

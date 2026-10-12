@@ -60,8 +60,8 @@ const RACK_HEAT := 12.0  # degrees a rack adds to its own tile each step
 # into a tile but run hotter and hungrier than they are fast. Deviation per rack follows its compute.
 const RACKS := {
 	"rack": {"compute": 1.0, "heat": 1.0, "power": 1.0},
-	"rack_improved": {"compute": 2.0, "heat": 2.5, "power": 2.5},
-	"rack_advanced": {"compute": 4.0, "heat": 6.0, "power": 6.0},
+	"rack_improved": {"compute": 3.0, "heat": 2.5, "power": 2.5},
+	"rack_advanced": {"compute": 5.0, "heat": 6.0, "power": 6.0},
 }
 const HEAT_SPREAD := 0.2  # share of the difference that flows to each open neighbour per pass
 const HEAT_PASSES := 4  # spreading passes per step, so heat crosses a room in days, not months
