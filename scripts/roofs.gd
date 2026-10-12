@@ -69,8 +69,17 @@ func _find_buildings() -> void:
 					if group[j] == b:
 						group[j] = a
 			wall_owner[t] = i
+	var union := {}  # group -> every tile of its rooms: one roof, drawn once
+	var led := {}
 	for i in buildings.size():
 		buildings[i].group = group[i]
+		if not union.has(group[i]):
+			union[group[i]] = {}
+		union[group[i]].merge(buildings[i].tiles)
+	for i in buildings.size():
+		buildings[i].roof_tiles = union[group[i]]
+		buildings[i].lead = not led.has(group[i])  # the first room of a group draws its roof
+		led[group[i]] = true
 	var was_indoor := {}
 	for t in heat_cells:
 		was_indoor[t] = true
@@ -88,7 +97,7 @@ func _find_buildings() -> void:
 				_set_temp(t, INDOOR_TEMP)
 	for t in was_indoor:
 		if not _indoor(t):
-			_set_temp(t, OUTDOOR_TEMP)
+			_set_temp(t, outdoor_temp)
 	for bld in buildings:
 		var total := 0.0
 		for t in bld.tiles:
@@ -123,24 +132,38 @@ func _roofed(t: Vector2i) -> bool:
 
 
 func _draw_roof(bld: Dictionary) -> void:
-	if bld.alpha <= 0.01:
+	if bld.alpha <= 0.01 or not bld.lead:
 		return
+	var tiles: Dictionary = bld.roof_tiles
 	var a: float = bld.alpha
 	var lift := Vector2(0, WALL_H)  # the roof sits on top of the walls
 	var fill := Color(0.56, 0.5, 0.45, a)
+	var seam := Color(0.5, 0.44, 0.4, a)
 	var edge := Color(0.32, 0.28, 0.26, a)
-	for t in bld.tiles:
+	var over := 0.6 if a >= 0.99 else 0.0  # a hair of overlap so neighbours never show a gap at odd zooms
+	for t in tiles:
 		var p := Vector2(t) * TILE - lift
-		draw_rect(Rect2(p, Vector2(TILE, TILE)), fill.lightened(0.04) if (t.x + t.y) % 2 == 0 else fill)
-	for t in bld.tiles:
+		var size := Vector2(TILE + (over if tiles.has(t + Vector2i.RIGHT) else 0.0), TILE + (over if tiles.has(t + Vector2i.DOWN) else 0.0))
+		draw_rect(Rect2(p, size), fill)
+	for t in tiles:  # standing seams, at the same height on every tile so they run on across the join
 		var p := Vector2(t) * TILE - lift
-		if not bld.tiles.has(t + Vector2i.UP): draw_line(p, p + Vector2(TILE, 0), edge, 3.0)
-		if not bld.tiles.has(t + Vector2i.LEFT): draw_line(p, p + Vector2(0, TILE), edge, 3.0)
-		if not bld.tiles.has(t + Vector2i.RIGHT): draw_line(p + Vector2(TILE, 0), p + Vector2(TILE, TILE), edge, 3.0)
-		if not bld.tiles.has(t + Vector2i.DOWN):
-			draw_line(p + Vector2(0, TILE), p + Vector2(TILE, TILE), edge, 3.0)
+		for y in [10.0, 21.0]:
+			draw_line(p + Vector2(0, y), p + Vector2(TILE + (over if tiles.has(t + Vector2i.RIGHT) else 0.0), y), seam, 1.0)
+	for t in tiles:
+		var p := Vector2(t) * TILE - lift
+		var l := not tiles.has(t + Vector2i.LEFT)
+		var r := not tiles.has(t + Vector2i.RIGHT)
+		var u := not tiles.has(t + Vector2i.UP)
+		var d := not tiles.has(t + Vector2i.DOWN)
+		var x0 := -1.5 if l else 0.0  # edge lines run out past the corner so corners are filled in
+		var x1 := TILE + (1.5 if r else 0.0)
+		if u: draw_line(p + Vector2(x0, 0), p + Vector2(x1, 0), edge, 3.0)
+		if l: draw_line(p + Vector2(0, -1.5 if u else 0.0), p + Vector2(0, TILE), edge, 3.0)
+		if r: draw_line(p + Vector2(TILE, -1.5 if u else 0.0), p + Vector2(TILE, TILE), edge, 3.0)
+		if d:
+			draw_line(p + Vector2(x0, TILE), p + Vector2(x1, TILE), edge, 3.0)
 			var front: Color = WALLS[wall_tiles[t]].front if _is_wall(t) else Color(0.3, 0.29, 0.32)
-			draw_rect(Rect2(p + Vector2(0, TILE), Vector2(TILE, WALL_H)), Color(front, a))  # wall front below the eaves
+			draw_rect(Rect2(p + Vector2(x0 + (1.5 if l else 0.0) * 0.0, TILE), Vector2(x1 - x0, WALL_H)), Color(front, a))  # wall front below the eaves
 			if window_objects.has(t):
 				_draw_window_ac(p + Vector2(0, WALL_H), a)
 			if wall_tiles.get(t) == "door":  # keep doors visible from outside
@@ -148,7 +171,7 @@ func _draw_roof(bld: Dictionary) -> void:
 				draw_circle(p + Vector2(TILE - 10, TILE + WALL_H * 0.6), 1.5, Color(0.9, 0.8, 0.4, a))
 		elif wall_tiles.get(t) == "door":  # side or back door: mark it on the roof edge
 			draw_rect(Rect2(p + Vector2(8, 8), Vector2(TILE - 16, TILE - 16)), Color(0.62, 0.43, 0.25, a))
-	for t in bld.tiles:
+	for t in tiles:
 		if roof_objects.has(t) and roof_objects[t] != "part":
 			call("_draw_roof_" + roof_objects[t], Vector2(t) * TILE - lift, a)
 

@@ -1,11 +1,11 @@
-extends "res://scripts/ui.gd"
+extends "res://scripts/save.gd"
 ## Startup, loop and input. Part of the Main script chain (see scripts/README.md).
 
 func _ready() -> void:
 	rng.seed = 42
 	smog.resize(GRID_W * GRID_H)
 	heat.resize(GRID_W * GRID_H)
-	heat.fill(OUTDOOR_TEMP)
+	heat.fill(outdoor_temp)
 	_build_starter_office()
 	astar.region = Rect2i(0, 0, GRID_W, GRID_H)
 	astar.cell_size = Vector2(TILE, TILE)
@@ -31,7 +31,8 @@ func _ready() -> void:
 	_toggle_level()  # wraps round to the ground floor
 	_set_build_cat(BUILD_CATS[0].id)
 	_new_target(0)
-	_ask_company_name()
+	_start_game()  # Continue a save, or name a new company
+	_start_tutorial()  # offers Chet's tour once the name is in
 
 
 func _build_starter_office() -> void:
@@ -54,6 +55,10 @@ func _build_starter_office() -> void:
 	window_objects[Vector2i(34, 21)] = "window_ac"  # in the side wall, next to the racks
 	window_objects[Vector2i(34, 22)] = "window_ac"  # one per rack, or they cook
 	objects[Vector2i(36, 24)] = "gen_portable"  # round the side, humming
+	for x in range(32, 37):  # a gravel strip out to the generator, so a Mechanic can get to it
+		floor_tiles[Vector2i(x, 27)] = "gravel"
+	for y in range(25, 27):
+		floor_tiles[Vector2i(36, y)] = "gravel"
 
 
 # --- UI ---------------------------------------------------------------------
@@ -71,7 +76,7 @@ func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): dir.x += 1
 	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): dir.y -= 1
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): dir.y += 1
-	camera.position += dir * PAN_SPEED * delta / camera.zoom.x
+	camera.position += dir * PAN_SPEED * delta / camera.zoom
 
 	_day_timer += delta * speed
 	while _day_timer >= SECONDS_PER_DAY and not modal and not game_over:
@@ -125,13 +130,20 @@ func _unhandled_input(event: InputEvent) -> void:
 			if event.keycode == m.key:
 				_toggle_menu(m.id)
 				return
+		if event.keycode == KEY_O:  # the Company page has no menu button; its name in the top bar opens it too
+			_toggle_company_page(0)
+			return
 		var shown := _level_tools()
 		if not build_row.visible:
 			shown = []
 		if event.keycode >= KEY_1 and event.keycode < KEY_1 + shown.size() - 1:
 			_select_tool(shown[event.keycode - KEY_1])
 		elif event.keycode == KEY_Q and build_row.visible:
-			place_rot = (place_rot + 1) % 4
+			_rotate_key()
+		elif event.keycode == KEY_F and build_row.visible:
+			_deselect_tool()
+		elif event.keycode == KEY_Y and event.shift_pressed:
+			_toggle_tilt()
 		elif event.keycode == KEY_R and event.shift_pressed:
 			_toggle_roofs()
 		elif event.keycode == KEY_R:
@@ -148,28 +160,37 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_ESCAPE and gov.page.visible:
 			_toggle_menu("government")
 		elif event.keycode == KEY_ESCAPE:
+			_cancel_held()
 			if company_page.visible:
 				_set_company_page(false)
 			dragging = false
 			paint_tiles.clear()
 	elif event is InputEventMouseMotion and panning:
-		camera.position -= event.relative / camera.zoom.x
+		camera.position -= event.relative / camera.zoom
 	elif event is InputEventMouseButton and event.pressed:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
-				if build_row.visible and _in_bounds(hover):
-					dragging = true
-					drag_start = hover
-					paint_tiles.clear()
-					if TOOLS[tool_index].drag == "paint":
-						paint_tiles[_cursor()] = true
+				if not build_row.visible and RACKS.has(objects.get(hover, "")):
+					_toggle_rack(hover)  # click a rack to switch it off or on
+				elif build_row.visible and _in_bounds(hover):
+					if not held.is_empty():
+						_drop_held()
+					elif not tool_active:
+						_pick_up(hover, hover_sub)
+					else:
+						dragging = true
+						drag_start = hover
+						paint_tiles.clear()
+						if TOOLS[tool_index].drag == "paint":
+							paint_tiles[_cursor()] = true
 			MOUSE_BUTTON_RIGHT:
-				if dragging:
+				if not held.is_empty():
+					_cancel_held()
+				elif dragging:
 					dragging = false
 					paint_tiles.clear()
-				elif build_row.visible:
-					_demolish(hover, hover_sub)
-					_after_build()
+				elif build_row.visible and tool_active:
+					_deselect_tool()
 			MOUSE_BUTTON_MIDDLE:
 				panning = true
 			MOUSE_BUTTON_WHEEL_UP:
@@ -187,7 +208,8 @@ func _zoom(factor: float) -> void:
 	if _mouse_over_ui():  # scrolling a menu shouldn't zoom the map
 		return
 	var before := get_global_mouse_position()
-	camera.zoom = (camera.zoom * factor).clamp(Vector2(0.4, 0.4), Vector2(3, 3))
+	zoom_level = clampf(zoom_level * factor, 0.4, 3.0)
+	_apply_zoom()
 	camera.force_update_scroll()
 	camera.position += before - get_global_mouse_position()
 
