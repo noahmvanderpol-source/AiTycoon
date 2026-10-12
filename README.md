@@ -27,7 +27,7 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 - Pick each person's job from their dropdown. They walk to a free workstation and get to work (a little busy bubble shows over their head):
   - **Research** at a desk: trains models faster (+25% each).
   - **Engineering** at an Engineer's Workstation (Build > Furniture, $15,000): up to 5 engineers work anywhere within 6 tiles of it, and each tends a server rack in that radius for +0.5 compute. Hover a workstation (or place one) to see its radius and the racks it covers.
-  - **Wear and tear:** every rack has a condition from 0 to 100% that scales its output (shown as a bar above the rack once it drops). Racks nobody maintains lose 0.5% a day, down to 25%. Each engineer at a workstation maintains up to 4 racks in its radius and restores 5% a day.
+  - **Wear and tear:** every rack has a condition from 0 to 100% that scales its output (shown as a bar above the rack once it drops). Racks nobody maintains lose 0.5% a day, down to 25%. Each engineer at a workstation maintains up to 7 racks in its radius and restores 5% a day.
   - **Growth** at a desk: +20% users each.
   - **Maintenance** (Mechanics): stand on floor next to a generator and keep it in shape. Generators have a 0-100% condition that scales what they can make; running ones lose 0.4% a day (less when lightly loaded), down to 25%. Each mechanic restores 4% a day to up to 3 generators within 6 tiles. The starter generator has a gravel strip so a mechanic can reach it.
   - **Slack off**: wanders around, and only collects half their pay.
