@@ -380,6 +380,12 @@ func _draw_gen_body(p: Vector2, t: Vector2i, size: Vector2i, h: float, col: Colo
 	var d := size.y * TILE
 	_ellipse(p + Vector2(w / 2.0, d - 4), w / 2.0, 5, Color(0, 0, 0, 0.25))
 	_box(Rect2(p + Vector2(3, 6), Vector2(w - 6, d - 8)), h, col.lightened(0.15), col.darkened(0.3))
+	var cond := _gen_cond(t)
+	if cond < 100.0:  # condition bar: green, then orange, then red as it wears
+		var bar := Color(0.4, 0.9, 0.4) if cond >= 75.0 else (Color(1.0, 0.65, 0.2) if cond >= 50.0 else Color(1.0, 0.3, 0.25))
+		var bw := minf(w - 6.0, 24.0)
+		draw_rect(Rect2(p + Vector2(3, -1 - h), Vector2(bw, 3)), Color(0, 0, 0, 0.5))
+		draw_rect(Rect2(p + Vector2(3, -1 - h), Vector2(bw * cond / 100.0, 3)), bar)
 	if gen_output.get(t, 0.0) > 0.0:  # running: puffs of exhaust drift up
 		for i in stacks.size():
 			var k := fmod(_time * 0.8 + t.x * 0.37 + i * 0.3, 1.0)

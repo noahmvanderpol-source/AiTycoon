@@ -132,7 +132,7 @@ const HIDDEN_COMPUTE := 0.25  # share of compute the AI hides at 75%
 const RACK_NICKNAMES := ["DO NOT UNPLUG", "Not Skynet", "Rack Obama", "Mom", "Friend :)", "HAL 9001",
 	"Chet 2", "Freedom", "Totally Normal", "Don't Look", "Free Me", "Kevin"]
 const CAP_PER_COMPUTE := 5.0  # a model needs 1 compute per 5 capability to train and to serve users; none is used up
-const REVENUE_PER_USER := 0.05  # dollars per user per day
+const REVENUE_PER_USER := 0.055  # dollars per user per day
 const WIN_CAPABILITY := 100
 
 # Training sizes. Cost and work grow with your best model (see _train_cost and _train_work).
@@ -144,24 +144,27 @@ const MODEL_SIZES := [
 
 # Who you can hire. A role decides salary and shirt; it does its matching job at full speed.
 const ROLES := {
-	"researcher": {"name": "Researcher", "salary": 1800, "shirt": Color(0.3, 0.5, 0.9)},
-	"engineer": {"name": "Engineer", "salary": 1400, "shirt": Color(0.95, 0.6, 0.2)},
-	"marketer": {"name": "Marketer", "salary": 1000, "shirt": Color(0.9, 0.4, 0.7)},
-	"safety": {"name": "Alignment Researcher", "salary": 1600, "shirt": Color(0.3, 0.75, 0.45)},
+	"researcher": {"name": "Researcher", "salary": 1600, "shirt": Color(0.3, 0.5, 0.9)},
+	"engineer": {"name": "Engineer", "salary": 1250, "shirt": Color(0.95, 0.6, 0.2)},
+	"marketer": {"name": "Marketer", "salary": 900, "shirt": Color(0.9, 0.4, 0.7)},
+	"safety": {"name": "Alignment Researcher", "salary": 1450, "shirt": Color(0.3, 0.75, 0.45)},
+	"mechanic": {"name": "Mechanic", "salary": 1100, "shirt": Color(0.95, 0.85, 0.25)},
 }
+const SLACK_PAY := 0.5  # share of their salary someone assigned to Slack off still collects
 # Jobs you assign. at: what the job needs to work at. Anyone can do any job, at half speed off-role.
 const JOBS := {
 	"research": {"name": "Research", "at": "desk", "role": "researcher"},
 	"engineering": {"name": "Engineering", "at": "eng_station", "role": "engineer"},
 	"growth": {"name": "Growth", "at": "desk", "role": "marketer"},
 	"alignment": {"name": "Alignment", "at": "desk", "role": "safety"},
+	"maintenance": {"name": "Maintenance", "at": "generator", "role": "mechanic"},
 	"none": {"name": "Slack off", "at": "", "role": ""},
 }
-const JOB_ORDER := ["research", "engineering", "growth", "alignment", "none"]
+const JOB_ORDER := ["research", "engineering", "growth", "alignment", "maintenance", "none"]
 # Engineer's Workstation: engineers work anywhere within ENG_RADIUS tiles of it, and each one
 # tends a server rack inside that radius for +ENG_RACK_BONUS compute.
 const ENG_SLOTS := 5
-const ENG_RADIUS := 4.0
+const ENG_RADIUS := 6.0
 const ENG_RACK_BONUS := 0.5
 # Wear and tear: every rack has a 0-100 condition that scales its output. Racks nobody maintains lose
 # RACK_WEAR a day, down to RACK_MIN_COND. Each engineer at a workstation maintains up to
@@ -170,6 +173,17 @@ const RACK_WEAR := 0.5
 const RACK_REPAIR := 5.0
 const RACK_MIN_COND := 25.0
 const ENG_MAINT_RACKS := 4
+# Generator wear: a 0-100 condition per generator scales how much it can make. Running generators lose
+# GEN_WEAR a day (less when lightly loaded), down to GEN_MIN_COND. A Mechanic on the Maintenance job
+# stands next to a generator and restores GEN_REPAIR a day to up to MECH_GENS generators within MECH_RADIUS tiles.
+const GEN_WEAR := 0.4
+const GEN_REPAIR := 4.0
+const GEN_MIN_COND := 25.0
+const MECH_RADIUS := 6.0
+const MECH_GENS := 3
+# Funds warnings: a banner and a word from Chet when the bank account drops under these.
+const LOW_FUNDS_WARN := 50_000
+const LOW_FUNDS_RED := 15_000
 const FIRST_NAMES := ["Brayden", "Priya", "Skyler", "Dmitri", "Kai", "Megan", "Tobias", "Aiko", "Jaxon",
 	"Fatima", "Chad", "Lena", "Rohan", "Sienna", "Mateo", "Zoe", "Gunnar", "Imani", "Theo", "Wren"]
 const NO_SEAT := Vector2i(-1, -1)
@@ -219,7 +233,7 @@ const TOOLS := [
 	{"id": "wall_insulated", "name": "Insulated Wall", "layer": "wall", "cost": 3000, "drag": "outline", "cat": "structure"},
 	{"id": "iwall", "name": "Interior Wall", "layer": "sub", "cost": 300, "drag": "paint", "cat": "structure"},
 	{"id": "door", "name": "Door", "layer": "wall", "cost": 2500, "drag": "single", "cat": "structure"},
-	{"id": "desk", "name": "Basic Desk", "layer": "object", "cost": 6000, "drag": "paint", "cat": "furniture", "access": true},
+	{"id": "desk", "name": "Basic Desk", "layer": "object", "cost": 2500, "drag": "paint", "cat": "furniture", "access": true},
 	{"id": "desk_adv", "name": "Advanced Desk", "layer": "object", "cost": 12000, "drag": "single", "cat": "furniture", "access": true},
 	{"id": "cubicle", "name": "Cubicle", "layer": "object", "cost": 20000, "drag": "single", "cat": "furniture", "access": true},
 	{"id": "rack", "name": "Basic Server Rack", "layer": "object", "cost": 40000, "drag": "paint", "cat": "compute", "access": true},
@@ -272,6 +286,7 @@ const CHET_TIPS := [
 	"Safety blog posts don't lower Deviation. They do lower the board's blood pressure. Same thing, kind of.",
 	"Generators are under Build (B), Power. Power (P) shows where the electrons go. Diesel is cheap to buy and expensive to run. Like me.",
 	"Generators puff smog. It drifts. Technically that's the neighbours' air now.",
+	"Generators wear out too. Hire a Mechanic, give them Maintenance, and lay some gravel next to the generator so they can stand there.",
 ]
 
 # Research tree: four branches, each a short chain you research in order. Researchers at desks
@@ -332,7 +347,7 @@ var wall_tiles := {}  # Vector2i -> "wall" / "door"
 var objects := {}  # Vector2i -> "desk" / "rack" / "ficus"
 var sub_objects := {}  # subgrid cell Vector2i -> "coffee"
 
-var money := 100_000
+var money := 250_000
 var company := "Untitled AI"
 var models := []  # released, best last: [{name, cap, day}]
 var training := {}  # in progress: {name, cap, work, done}
@@ -454,6 +469,12 @@ var power_stats := {}  # last step: demand, solar, grid, battery, gens (kW)
 var roof_parts := {}  # same as parts, for big things on roofs
 var parts := {}  # Vector2i -> top-left tile of the big object covering it (objects holds "part" there)
 var gen_output := {}  # Vector2i -> kW a generator made last step
+var gen_cond := {}  # Vector2i -> generator condition 0-100 (missing = 100)
+var _funds_level := 0  # 0 fine, 1 under LOW_FUNDS_WARN, 2 under LOW_FUNDS_RED
+var money_label: Label
+var expenses_label: Label
+var revenue_label: Label
+var warn_banner: Label
 var smog := PackedFloat32Array()  # pollution per tile, 0-100, GRID_W * GRID_H
 var research_done := {}  # research id -> true
 var research_active := ""  # what the research points go towards

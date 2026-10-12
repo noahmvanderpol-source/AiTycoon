@@ -49,6 +49,9 @@ func _describe_hover() -> String:
 					lines[0] += ' "%s"' % rack_names[t]
 				lines.append("Output: %d%%" % int(_rack_output(t) * 100.0))
 				lines.append("Condition: %d%%%s" % [int(_rack_cond(t)), "" if _maintained_racks().has(t) else " (no engineer)"])
+			if GENERATORS.has(id):
+				lines.append("Condition: %d%%%s" % [int(_gen_cond(anchor)), "" if _maintained_gens().has(anchor) else " (no mechanic)"])
+				lines.append("Can make up to %d kW now" % int(GENERATORS[id].kw * _gen_cond(anchor) / 100.0))
 			lines.append_array(_effects(id))
 			if _needs_access(id) and not _reachable(anchor):
 				lines.append("No access! Needs a clear path from a door to one side.")
@@ -104,7 +107,8 @@ func _effects(id: String) -> Array:
 		return ["Power: makes up to %.1f kW in the sun" % SOLAR_ARRAYS[id].kw, "Smog: none"]
 	if GENERATORS.has(id):
 		var g: Dictionary = GENERATORS[id]
-		return ["Power: makes up to %d kW" % g.kw, "Fuel: $%.2f per kWh" % g.fuel, "Smog: %.2f per kWh" % g.smog]
+		return ["Power: makes up to %d kW" % g.kw, "Fuel: $%.2f per kWh" % g.fuel, "Smog: %.2f per kWh" % g.smog,
+			"Wears out while running; a Mechanic on Maintenance repairs it"]
 	match id:
 		"eng_station":
 			return ["Up to %d engineers work within %d tiles" % [ENG_SLOTS, int(ENG_RADIUS)],

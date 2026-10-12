@@ -18,6 +18,14 @@ func _build_ui() -> void:
 	top.add_theme_stylebox_override("panel", _panel_style())
 	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE, Control.PRESET_MODE_MINSIZE, 8)
 	layer.add_child(top)
+	warn_banner = Label.new()  # low-funds warning, just under the top bar
+	warn_banner.add_theme_stylebox_override("normal", _panel_style(0.92))
+	warn_banner.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 0)
+	warn_banner.position.y = 52
+	warn_banner.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	warn_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	warn_banner.visible = false
+	layer.add_child(warn_banner)
 	var top_row := HBoxContainer.new()
 	top.add_child(top_row)
 	company_button = Button.new()  # the company name; opens the Company page
@@ -28,6 +36,14 @@ func _build_ui() -> void:
 	company_button.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5))
 	company_button.pressed.connect(_toggle_company_page.bind(0))
 	top_row.add_child(company_button)
+	money_label = Label.new()
+	top_row.add_child(money_label)
+	expenses_label = Label.new()
+	expenses_label.mouse_filter = Control.MOUSE_FILTER_STOP  # so hovering it shows the breakdown
+	top_row.add_child(expenses_label)
+	revenue_label = Label.new()
+	revenue_label.mouse_filter = Control.MOUSE_FILTER_STOP
+	top_row.add_child(revenue_label)
 	top_label = Label.new()
 	top_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_row.add_child(top_label)
@@ -165,13 +181,13 @@ const GUIDE := [
 	["Models (M)", "Server Racks make compute. Pick a model size to train; bigger models take longer and raise capability more. Better models bring more users, and users bring revenue. Cutting corners trains faster but raises Deviation. Engineers at an Engineer's Workstation add compute for racks within its radius. Racks wear down without engineers: each engineer maintains up to 4 racks in range, and a worn rack makes less compute."],
 	["Desks and break rooms", "Productivity runs 0-100%. Staff start at 80%. A Basic Desk adds 5%, an Advanced Desk (2x1) 10%, a Cubicle (2x2) 15%; place a better desk on an old one to upgrade it. Carpet adds 3%. Break room things (Coffee Maker, Microwave, Mini-Fridge, Counter with Sink, Table, Chair, Garbage Can) each add 1-3% for everyone in the same building, up to 12%. Coffee Makers and Microwaves can go on top of a counter. Heat takes it away."],
 	["Amenities", "Every worker needs a kitchen and a bathroom. A kitchenette (Counter with Sink plus a Microwave or Mini-Fridge) covers 10 workers, a Toilet Stall 5, a Bathroom Sink 10. Fall short and everyone's productivity drops in proportion to how many go without: up to 15% for kitchens, 15% for stalls, 5% for sinks."],
-	["Staff (T)", "Hire researchers, engineers, marketers and alignment researchers, then give each a job. You don't control people directly: they need a free desk, or a spot at an Engineer's Workstation, for their job, and heat makes them slower."],
+	["Staff (T)", "Hire researchers, engineers, marketers, alignment researchers and mechanics, then give each a job. You don't control people directly: they need a free desk, a spot at an Engineer's Workstation, or (for Maintenance) floor next to a generator, and heat makes them slower. Anyone set to Slack off still collects half their pay. Mechanics on Maintenance keep generators in shape: each looks after up to 3 generators within 6 tiles, and an unmaintained generator slowly loses output."],
 	["Board (O)", "Click your company name in the top bar (or press O) for the Company page. Its Board tab: each quarter the board sets a target. Hit it for +15 confidence, miss it for -25. At 0% you're fired, and running out of money gets you fired faster. Safety theater fools them for a while."],
 	["Heat (H)", "Racks heat their own tile and the heat radiates out across the room. Walls slow it and keep some desert heat out (better walls more). Hot racks throttle and hot staff slow down. An AC Unit on the roof cools a 7x7 area and cancels out about 4 racks; a Window AC on a wall cools the 3x3 next to it and handles about one. Put coolers near the racks. Tiles are tinted by temperature while the Heat panel is open."],
 	["Power (P)", "Racks, ACs and red-team rigs use power. The cheapest power runs first: solar, then the grid, then batteries, then generators by fuel price. Batteries store spare solar for the night. The grid hookup is capped until you lobby for more. Generators go outside, and their smog drifts across the map."],
 	["Deviation (V)", "Every rack adds Deviation, and training, cutting corners and smarter models raise the rate. Alignment researchers at desks and Red-Team Rigs bring it back down (rigs eat compute). At 25% the AI gets quirky, at 50% it sabotages rivals for you and scandals follow, at 75% it hides compute, lies on reports and staff quit. At 100% it takes over."],
 	["Research (E)", "Researchers at desks make research points; the founders make a trickle on their own. Pick a project in each of four branches: Construction, Equipment, Computer Chips and Productivity. Each branch is researched in order. Projects unlock new things in Build or give a lasting bonus. Points keep banking while nothing is picked."],
-	["Government (L)", "Lobby the state of Calizona. Three politicians each have a price, a pet issue and a scandal meter. The State Legislature takes general lobbying: no scandals, but each donation buys less Favor, and it passes AI-Friendly Regulation (Scrutiny rises half as fast) and a Tech Tax Break (10% of your daily burn back). Donations raise their Favor but also their Scandal; at 100 Scandal they resign and the replacement starts at 0 Favor. Favor drifts down over time, rises while their pet issue goes your way and falls faster while it doesn't. Influence is the average Favor of all four. Every lobbying price goes up 25% a year. Spend Favor on Grid Hookup Permits (Utilities Commissioner), a State AI Contract for extra revenue (Governor) and Water Rights (Water Board Chair). Scrutiny rises with Outrage, Deviation and scandals, and Influence brings it down. At 50 Scrutiny you're fined at the end of each quarter, and at 75 the state cancels your contract."],
+	["Government (L)", "Lobby the state of Calizona. Three politicians each have a price, a pet issue and a scandal meter. The State Legislature takes general lobbying: no scandals, but each donation buys less Favor, and it passes AI-Friendly Regulation (Scrutiny rises half as fast) and a Tech Tax Break (10% of your daily expenses back). Donations raise their Favor but also their Scandal; at 100 Scandal they resign and the replacement starts at 0 Favor. Favor drifts down over time, rises while their pet issue goes your way and falls faster while it doesn't. Influence is the average Favor of all four. Every lobbying price goes up 25% a year. Spend Favor on Grid Hookup Permits (Utilities Commissioner), a State AI Contract for extra revenue (Governor) and Water Rights (Water Board Chair). Scrutiny rises with Outrage, Deviation and scandals, and Influence brings it down. At 50 Scrutiny you're fined at the end of each quarter, and at 75 the state cancels your contract."],
 	["Outrage", "Smog that drifts off your property onto the houses in town or the farmhouses raises Outrage, the more smog the faster. Building on farmland raises it for every tile you pave over, and so does pumping water: the more water you use, the faster it climbs. It slowly fades once things calm down. Hover a house to see its smog. Generators near your fence are the usual cause. Later, community projects on the empty town lots will lower it."],
 	["Speed", "Space pauses. The buttons top right run time at 1x, 2x or 4x. A quarter lasts 15 minutes at 1x. N mutes the music."],
 ]
@@ -253,16 +269,16 @@ func _build_staff_tab() -> void:
 
 
 func _update_staff_tab() -> void:
-	var payroll := 0
+	var payroll := _payroll()
 	for s in staff:
-		payroll += s.salary
-		var status := "Slacking off"
+		var status := "Slacking off (half pay)" if s.job == "none" else "Slacking off"
 		if s.working:
 			status = "Working"
 		elif s.seat != NO_SEAT:
 			status = "Heading to work"
 		elif JOBS[s.job].at != "":
-			status = "Needs a free %s" % {"desk": "desk", "eng_station": "spot at an Engineer's Workstation"}.get(JOBS[s.job].at, JOBS[s.job].at)
+			status = "Needs a free %s" % {"desk": "desk", "eng_station": "spot at an Engineer's Workstation",
+				"generator": "generator with floor next to it"}.get(JOBS[s.job].at, JOBS[s.job].at)
 		s.label.text = "%s, %s, %d%%\n%s" % [s.name, ROLES[s.role].name, int(s.productivity * 100.0), status]
 	var lowered := ["heat"]
 	var lack := _amenity_shortfall()
@@ -558,9 +574,15 @@ func _update_hud() -> void:
 	var revenue := "Revenue %s/day" % _money(revenue_today) if models.size() > 0 else "Pre-revenue"
 	company_button.text = company
 	company_title.text = "%s, Calizona" % company
-	top_label.text = "%s   Burn %s/day   %s   Users %s   Compute %.1f   Deviation %d%%   Outrage %d%%   Board %d%%   %s, Day %d" % [
-		_money(money), _money(burn), revenue, _num(int(users)), _compute_per_day(), int(deviation), int(world.outrage), confidence,
+	money_label.text = "%s  " % _money(money)
+	expenses_label.text = "Expenses %s/day  " % _money(burn)
+	revenue_label.text = revenue + "  "
+	expenses_label.tooltip_text = _expenses_text()
+	revenue_label.tooltip_text = _revenue_text()
+	top_label.text = "Users %s  Compute %.1f  Deviation %d%%  Outrage %d%%  Board %d%%  %s, Day %d" % [
+		_num(int(users)), _compute_per_day(), int(deviation), int(world.outrage), confidence,
 		_quarter_name(q), (day - 1) % DAYS_PER_QUARTER + 1]
+	_update_funds_warning(burn)
 	_update_models_tab()
 	_update_staff_tab()
 	_update_board_tab()
@@ -568,6 +590,27 @@ func _update_hud() -> void:
 	_update_deviation_tab()
 	_update_power_tab()
 	_update_research_tab()
+
+
+# Two warnings as the bank account drains: under LOW_FUNDS_WARN (amber) and under LOW_FUNDS_RED (red).
+func _update_funds_warning(burn: int) -> void:
+	var level := 2 if money < LOW_FUNDS_RED else (1 if money < LOW_FUNDS_WARN else 0)
+	if level < _funds_level:  # climbing back out: don't flicker right at the line
+		var limit := LOW_FUNDS_RED if _funds_level == 2 else LOW_FUNDS_WARN
+		if money < limit * 1.1:
+			level = _funds_level
+	if level > _funds_level:
+		_chet("Heads up, bro: we're under %s. Runway is a state of mind, but also math." % _money(LOW_FUNDS_WARN) if level == 1
+			else "We're under %s. Ship something, cut staff, or start praying to the board. Preferably before payroll." % _money(LOW_FUNDS_RED))
+	_funds_level = level
+	money_label.add_theme_color_override("font_color", [Color.WHITE, Color(1.0, 0.75, 0.25), Color(1.0, 0.35, 0.3)][level])
+	warn_banner.visible = level > 0
+	if level == 0:
+		return
+	var net := burn - revenue_today
+	var runway := "" if net <= 0 else ", about %d days at this rate" % int(maxf(money, 0.0) / net)
+	warn_banner.text = ("LOW FUNDS: %s left%s" if level == 1 else "NEARLY BROKE: %s left%s") % [_money(money), runway]
+	warn_banner.add_theme_color_override("font_color", Color(1.0, 0.75, 0.25) if level == 1 else Color(1.0, 0.35, 0.3))
 
 
 func _num(v: int) -> String:

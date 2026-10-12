@@ -13,6 +13,7 @@ func _new_day() -> void:
 	_tick_deviation()
 	gov.tick_day()
 	_tick_wear()
+	_tick_gen_repair()
 	if game_over:
 		return
 	if money < 0:
@@ -130,6 +131,86 @@ func _tick_wear() -> void:
 			rack_cond.erase(t)
 	if worn > 0 and day % 15 == 0:
 		_chet("%d rack%s held together with zip ties. Put engineers at a Workstation near them, bro." % [worn, "" if worn == 1 else "s"])
+
+
+func _gen_cond(t: Vector2i) -> float:
+	return gen_cond.get(t, 100.0)
+
+
+# Generators the mechanics get to today: each working Maintenance mechanic covers up to MECH_GENS
+# generators within MECH_RADIUS tiles of where they stand, nearest first.
+func _maintained_gens() -> Dictionary:
+	var done := {}
+	for s in staff:
+		if not s.working or s.job != "maintenance":
+			continue
+		var near: Array = objects.keys().filter(func(g): return GENERATORS.has(objects[g]) and not done.has(g) and Vector2(g - s.spot).length() <= MECH_RADIUS)
+		near.sort_custom(func(a, b): return Vector2(a - s.spot).length() < Vector2(b - s.spot).length())
+		for g in near.slice(0, ceili(MECH_GENS * s.productivity)):
+			done[g] = true
+	return done
+
+
+# Called every power step for a generator that ran at `load` (0-1) of its full rating.
+func _wear_gen(t: Vector2i, load: float) -> void:
+	if load > 0.0:
+		gen_cond[t] = maxf(_gen_cond(t) - GEN_WEAR / HEAT_STEPS_PER_DAY * (0.5 + 0.5 * load), GEN_MIN_COND)
+
+
+func _tick_gen_repair() -> void:
+	var fixed := _maintained_gens()
+	var worn := 0
+	for t in objects:
+		if not GENERATORS.has(objects[t]):
+			continue
+		if fixed.has(t):
+			gen_cond[t] = minf(_gen_cond(t) + GEN_REPAIR, 100.0)
+		if _gen_cond(t) < 60.0:
+			worn += 1
+	for t in gen_cond.keys():  # forget generators that were demolished
+		if not GENERATORS.has(objects.get(t, "")):
+			gen_cond.erase(t)
+	if worn > 0 and day % 15 == 0:
+		_chet("%d generator%s running on prayers and duct tape. Hire a Mechanic and put them on Maintenance, bro." % [worn, "" if worn == 1 else "s"])
+
+
+# The Expenses hover in the top bar: where the money goes each day.
+func _expenses_text() -> String:
+	var lines := ["Expenses per day: %s" % _money(_daily_burn()), ""]
+	var by_role := {}
+	var saved := 0
+	for s in staff:
+		var r: Array = by_role.get(s.role, [0, 0])
+		r[0] += 1
+		r[1] += _pay(s)
+		by_role[s.role] = r
+		saved += s.salary - _pay(s)
+	lines.append("Payroll: %s" % _money(_payroll()))
+	if staff.is_empty():
+		lines.append("  nobody on the payroll")
+	for role in ROLES:
+		if by_role.has(role):
+			lines.append("  %d x %s: %s" % [by_role[role][0], ROLES[role].name, _money(by_role[role][1])])
+	if saved > 0:
+		lines.append("  Slacking off pays %d%%, saving %s" % [int(SLACK_PAY * 100.0), _money(saved)])
+	lines.append("Power and fuel: %s (yesterday's bill)" % _money(power_bill))
+	return "\n".join(lines)
+
+
+# The Revenue hover in the top bar: where the money comes from each day.
+func _revenue_text() -> String:
+	if models.is_empty():
+		return "Revenue per day: $0\n\nPre-revenue. Train and release a model, then users show up and pay."
+	var bonus := _research_bonus("revenue")
+	var lines := ["Revenue per day: %s" % _money(revenue_today), "",
+		"%s users x $%.3f each = %s" % [_num(int(users)), REVENUE_PER_USER, _money(int(users * REVENUE_PER_USER))]]
+	if absf(bonus) > 0.001:
+		lines.append("Research: %+d%% revenue" % int(bonus * 100.0))
+	if gov != null and gov.contract_days > 0:
+		lines.append("")
+		lines.append("Not counted above:")
+		lines.append("  State AI Contract: +%s a day" % _money(gov.CONTRACT_PER_DAY))
+	return "\n".join(lines)
 
 
 # Compute is spent in this order: red-team rigs, then whatever the AI hides at 75%, then training.

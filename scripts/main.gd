@@ -54,6 +54,10 @@ func _build_starter_office() -> void:
 	window_objects[Vector2i(34, 21)] = "window_ac"  # in the side wall, next to the racks
 	window_objects[Vector2i(34, 22)] = "window_ac"  # one per rack, or they cook
 	objects[Vector2i(36, 24)] = "gen_portable"  # round the side, humming
+	for x in range(32, 37):  # a gravel strip out to the generator, so a Mechanic can get to it
+		floor_tiles[Vector2i(x, 27)] = "gravel"
+	for y in range(25, 27):
+		floor_tiles[Vector2i(36, y)] = "gravel"
 
 
 # --- UI ---------------------------------------------------------------------

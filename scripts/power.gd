@@ -61,7 +61,8 @@ func _tick_power() -> void:
 	var made := 0.0
 	for t in gens:
 		var g: Dictionary = GENERATORS[objects[t]]
-		var out := minf(need, g.kw)
+		var out := minf(need, g.kw * _gen_cond(t) / 100.0)  # a worn generator can't make its full rating
+		_wear_gen(t, out / g.kw)
 		need -= out
 		made += out
 		gen_output[t] = out

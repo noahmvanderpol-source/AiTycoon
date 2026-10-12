@@ -259,10 +259,15 @@ func _demolish(t: Vector2i, at_sub := NO_SEAT) -> void:
 			return
 
 
+# What someone costs a day: people assigned to Slack off only get SLACK_PAY of their salary.
+func _pay(s: Dictionary) -> int:
+	return int(s.salary * (SLACK_PAY if s.job == "none" else 1.0))
+
+
 func _payroll() -> int:
 	var payroll := 0
 	for s in staff:
-		payroll += s.salary
+		payroll += _pay(s)
 	return payroll
 
 
