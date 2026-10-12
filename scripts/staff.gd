@@ -3,7 +3,8 @@ extends "res://scripts/deviation.gd"
 
 func _walkable(t: Vector2i) -> bool:
 	var door: bool = wall_tiles.get(t) == "door"
-	if _subs_in(t).any(func(c): return sub_objects[c] == "iwall"):
+	var subs := _subs_in(t)  # a partition blocks the tile, unless an Interior Door is set into it
+	if subs.any(func(c): return sub_objects[c] == "iwall") and not subs.any(func(c): return sub_objects[c] == "idoor"):
 		return false
 	return (floor_tiles.has(t) or door) and (door or not wall_tiles.has(t)) and not objects.has(t)
 
@@ -17,13 +18,19 @@ func _refresh_walkable() -> void:
 func _after_build() -> void:
 	_refresh_walkable()
 	_find_buildings()
+	_rebuild_pipe_net()
 	_refresh_access()
 	for s in staff:
+		# Someone already sitting at their workstation keeps working through any build, move or
+		# switch, so racks and generators never lose their crew for a moment while you rearrange.
+		var seated: bool = s.seat != NO_SEAT and s.path.is_empty() and Vector2i((s.pos / TILE).floor()) == s.spot
 		s.path = PackedVector2Array()
 		s.working = false
 		# Lose the workstation if it was demolished or its spot got blocked.
 		if s.seat != NO_SEAT and (_station_kind(objects.get(s.seat, "")) != JOBS[s.job].at or not _walkable(s.spot)):
 			s.seat = NO_SEAT
+		elif seated:
+			s.working = true
 
 
 # Flood out from every door and outdoor floor to find where staff can actually walk to.
