@@ -23,7 +23,7 @@ You start with a small office in the Calizona desert, $2M and two staff who wand
 - Rival labs (ClosedAI, Gogle, Metta) release models on a fixed script. Falling behind their best model costs you users.
 
 ## Staff
-- The **Staff** tab hires Researchers, Engineers, Marketers, Alignment Researchers and Mechanics ($5,000 recruiter fee, then a daily salary). Firing costs 5 days of salary. You start with $250,000. Hover Expenses in the top bar to see what you pay for; below $50,000 and again below $15,000 a warning banner appears.
+- The **Staff** tab hires Researchers, Engineers, Marketers, Alignment Researchers and Mechanics ($5,000 recruiter fee, then a daily salary). Firing costs 5 days of salary. You start with $150,000. Hover Expenses in the top bar to see what you pay for; below $50,000 and again below $15,000 a warning banner appears.
 - Pick each person's job from their dropdown. They walk to a free workstation and get to work (a little busy bubble shows over their head):
   - **Research** at a desk: trains models faster (+25% each).
   - **Engineering** at an Engineer's Workstation (Build > Furniture, $15,000): up to 5 engineers work anywhere within 6 tiles of it, and each tends a server rack in that radius for +0.5 compute. Hover a workstation (or place one) to see its radius and the racks it covers.

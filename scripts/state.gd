@@ -347,7 +347,7 @@ var wall_tiles := {}  # Vector2i -> "wall" / "door"
 var objects := {}  # Vector2i -> "desk" / "rack" / "ficus"
 var sub_objects := {}  # subgrid cell Vector2i -> "coffee"
 
-var money := 250_000
+var money := 150_000
 var company := "Untitled AI"
 var models := []  # released, best last: [{name, cap, day}]
 var training := {}  # in progress: {name, cap, work, done}
