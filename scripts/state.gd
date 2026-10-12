@@ -172,7 +172,7 @@ const ENG_RACK_BONUS := 0.5
 const RACK_WEAR := 0.5
 const RACK_REPAIR := 5.0
 const RACK_MIN_COND := 25.0
-const ENG_MAINT_RACKS := 7
+const ENG_MAINT_RACKS := 5
 # Generator wear: a 0-100 condition per generator scales how much it can make. Running generators lose
 # GEN_WEAR a day (less when lightly loaded), down to GEN_MIN_COND. A Mechanic on the Maintenance job
 # stands next to a generator and restores GEN_REPAIR a day to up to MECH_GENS generators within MECH_RADIUS tiles.
