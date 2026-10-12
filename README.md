@@ -6,7 +6,7 @@ A satirical tycoon/base-building game about running an AI startup. Built with Go
 Open Godot, choose **Import**, select this folder's `project.godot`, then press **F5**.
 
 ## Controls (prototype)
-You start with a small office in the Calizona desert, $100,000 and two founders paid in equity who wander around.
+You start with a small office in the Calizona desert, $2M and two staff who wander around.
 - `1`-`8` or the bottom bar: Carpet, Concrete, Wall, Door, Desk, Server Rack, Ficus, Coffee Maker
 - Each tile has a 2x2 subgrid. Small items (like the Coffee Maker) snap to a quarter tile, so four fit on one tile
 - `X`: Demolish tool (50% refund). Right click also demolishes one tile.

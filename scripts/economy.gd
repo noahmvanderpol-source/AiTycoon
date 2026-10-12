@@ -1,0 +1,336 @@
+extends "res://scripts/build.gd"
+## Models, users, rivals and the board. Part of the Main script chain (see scripts/README.md).
+
+func _new_day() -> void:
+	day += 1
+	power_bill = int(_power_cost)
+	_power_cost = 0.0
+	money -= _payroll() + power_bill
+	_tick_training()
+	_tick_research()
+	_tick_users()
+	_tick_rivals()
+	_tick_deviation()
+	gov.tick_day()
+	_tick_wear()
+	if game_over:
+		return
+	if money < 0:
+		_end_game("Fired",
+			"You ran out of money. The board fired you by group text, then asked if you could still Venmo them for lunch.")
+	elif (day - 1) % DAYS_PER_QUARTER == 0:
+		_end_quarter()
+
+func _grid_kw() -> float:
+	return GRID_KW + gov.grid_bonus()
+
+
+func _racks() -> int:
+	var n := 0
+	for t in objects:
+		if RACKS.has(objects[t]):
+			n += 1
+	return n
+
+
+# What all racks would give if none were throttled, in Basic racks.
+func _rack_max_compute() -> float:
+	var c := 0.0
+	for t in objects:
+		if RACKS.has(objects[t]):
+			c += RACKS[objects[t]].compute
+	return c
+
+
+# Sum of a per-tier field (heat, power) over all racks, in Basic racks.
+func _rack_sum(field: String) -> float:
+	var v := 0.0
+	for t in objects:
+		if RACKS.has(objects[t]):
+			v += RACKS[objects[t]][field]
+	return v
+
+
+# Engineers at a workstation add compute for racks in its radius. Hot racks throttle.
+func _compute_per_day() -> float:
+	return _rack_compute() + _engineer_compute()
+
+
+func _in_eng_radius(station: Vector2i, t: Vector2i) -> bool:
+	return Vector2(t - station).length() <= ENG_RADIUS
+
+
+# Each engineer tends one rack in their workstation's radius; extra engineers add nothing.
+func _engineer_compute() -> float:
+	var total := 0.0
+	for st in objects:
+		if objects[st] != "eng_station":
+			continue
+		var crew := 0.0
+		for s in staff:
+			if s.working and s.job == "engineering" and s.seat == st:
+				crew += (1.0 if s.role == "engineer" else 0.5) * s.productivity
+		crew *= 1.0 + _research_bonus("productivity")
+		var racks := objects.keys().filter(func(r): return RACKS.has(objects[r]) and _in_eng_radius(st, r)).size()
+		total += ENG_RACK_BONUS * minf(crew, racks)
+	return minf(total, ENG_RACK_BONUS * _racks())
+
+
+func _rack_compute() -> float:
+	var c := 0.0
+	for t in objects:
+		if RACKS.has(objects[t]):
+			c += _rack_output(t) * RACKS[objects[t]].compute
+	return c
+
+
+func _rack_output(t: Vector2i) -> float:
+	if not _reachable(t):
+		return 0.0  # nobody can get to it to keep it running
+	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * (0.0 if not _powered(t) else 1.0) \
+		* (1.0 + _research_bonus("compute")) * _rack_cond(t) / 100.0
+
+
+func _rack_cond(t: Vector2i) -> float:
+	return rack_cond.get(t, 100.0)
+
+
+# Racks the engineers get to today: each engineer covers ENG_MAINT_RACKS racks in their
+# workstation's radius, nearest first.
+func _maintained_racks() -> Dictionary:
+	var done := {}
+	for st in objects:
+		if objects[st] != "eng_station":
+			continue
+		var crew := 0.0
+		for s in staff:
+			if s.working and s.job == "engineering" and s.seat == st:
+				crew += (1.0 if s.role == "engineer" else 0.5) * s.productivity
+		var slots := int(ceilf(crew * ENG_MAINT_RACKS))
+		var near: Array = objects.keys().filter(func(r): return RACKS.has(objects[r]) and _in_eng_radius(st, r) and not done.has(r))
+		near.sort_custom(func(a, b): return Vector2(a - st).length() < Vector2(b - st).length())
+		for r in near.slice(0, slots):
+			done[r] = true
+	return done
+
+
+func _tick_wear() -> void:
+	var fixed := _maintained_racks()
+	var worn := 0
+	for t in objects:
+		if not RACKS.has(objects[t]):
+			continue
+		var c := _rack_cond(t)
+		c = minf(c + RACK_REPAIR, 100.0) if fixed.has(t) else maxf(c - RACK_WEAR, RACK_MIN_COND)
+		rack_cond[t] = c
+		if c < 60.0:
+			worn += 1
+	for t in rack_cond.keys():  # forget racks that were demolished
+		if not RACKS.has(objects.get(t, "")):
+			rack_cond.erase(t)
+	if worn > 0 and day % 15 == 0:
+		_chet("%d rack%s held together with zip ties. Put engineers at a Workstation near them, bro." % [worn, "" if worn == 1 else "s"])
+
+
+# Compute is spent in this order: red-team rigs, then whatever the AI hides at 75%, then training.
+func _redteam_compute() -> float:
+	var rigs := objects.keys().filter(func(r): return objects[r] == "redteam" and _powered(r)).size()
+	return minf(rigs * REDTEAM_COMPUTE, _compute_per_day())
+
+
+func _training_compute() -> float:
+	var c := _compute_per_day() - _redteam_compute()
+	if deviation >= 75.0:
+		c -= _compute_per_day() * HIDDEN_COMPUTE
+	return maxf(c, 0.0)
+
+
+# Researchers make every unit of compute count for more.
+func _research_mult() -> float:
+	return 1.0 + 0.25 * _workforce("research")
+
+
+func _training_speed() -> float:
+	return _training_compute() * _research_mult()
+
+
+# Compute a model of this capability needs to train or serve. It's a threshold, not a cost.
+func _compute_needed(cap: int) -> float:
+	return cap / CAP_PER_COMPUTE
+
+
+func _can_train(cap: int) -> bool:
+	return _racks() > 0 and _compute_per_day() >= _compute_needed(cap)
+
+
+# Share of users the best model can serve: all of them with enough compute, fewer without.
+func _serve_ratio() -> float:
+	var need := _compute_needed(_best_cap())
+	return 1.0 if need <= 0.0 else clampf(_compute_per_day() / need, 0.0, 1.0)
+
+
+func _best_cap() -> int:
+	return 0 if models.is_empty() else models.back().cap
+
+
+# Each step up the capability ladder costs more money and a lot more compute.
+func _train_cost(i: int) -> int:
+	return int(MODEL_SIZES[i].cost * pow(1.035, _best_cap()))
+
+
+func _train_work(i: int) -> float:
+	return MODEL_SIZES[i].work * pow(1.05, _best_cap())
+
+
+# How much a training run raises the Deviation rate while it runs.
+func _train_mod(i: int, rushed: bool) -> float:
+	return TRAIN_MOD[i] * (RUSH_MOD if rushed else 1.0)
+
+
+func _start_training(i: int) -> void:
+	var cost := _train_cost(i)
+	if not training.is_empty() or not _can_train(_best_cap() + int(MODEL_SIZES[i].gain)) or cost > money:
+		return
+	money -= cost
+	var size: Dictionary = MODEL_SIZES[i]
+	var rushed := rush_check.button_pressed
+	training = {
+		"name": "%s-%d %s" % [company.split(" ")[0], models.size() + 1, size.suffix],
+		"cap": _best_cap() + size.gain, "work": _train_work(i) * (RUSH_WORK if rushed else 1.0), "done": 0.0,
+		"mod": _train_mod(i, rushed), "rushed": rushed,
+	}
+	_chet(["Small model, smart move. Ship fast, apologize later.",
+		"A Pro model. Investors love the word Pro. They don't know what it means either.",
+		"ULTRA. Bro. This is the one. Probably. Unless it isn't."][i])
+
+
+func _tick_training() -> void:
+	if training.is_empty():
+		return
+	if not _can_train(training.cap):  # paused until there's enough compute again
+		return
+	training.done += _training_speed()
+	if training.done < training.work:
+		return
+	models.append({"name": training.name, "cap": training.cap, "day": day})
+	quarter_best_release = maxi(quarter_best_release, training.cap)
+	if training.cap >= WIN_CAPABILITY:
+		_end_game("You win?",
+			"%s reached capability %d. It reviewed the company, wrote a better strategy than yours in 4 seconds, and the board made it CEO.\n\nYou have built an AI fully capable of running the company itself. You win?" % [training.name, training.cap])
+		training = {}
+		return
+	var beat := "We beat %s's %s! Screenshot the benchmark, ignore the others." % [rival[1], rival[2]] \
+		if training.cap > _rival_cap() else "It's behind %s's %s, but the vibes are immaculate." % [rival[1], rival[2]]
+	_chet("%s just shipped with capability %d. %s" % [training.name, training.cap, beat])
+	training = {}
+
+
+func _user_target() -> float:
+	var cap := _best_cap()
+	if cap == 0:
+		return 0.0
+	# More capable models attract more users, losing to the best rival costs share,
+	# and marketers find more people to sell to.
+	return 2500.0 * pow(cap, 1.5) * clampf(float(cap) / _rival_cap(), 0.3, 1.5) * (1.0 + 0.2 * _workforce("growth")) * _serve_ratio()
+
+
+func _tick_users() -> void:
+	var target := _user_target()
+	users += (target - users) * (0.03 if target > users else 0.02)
+	revenue_today = int(users * REVENUE_PER_USER * (1.0 + _research_bonus("revenue")))
+	money += revenue_today
+	quarter_revenue += revenue_today
+
+
+func _tick_rivals() -> void:
+	while _next_rival < RIVAL_RELEASES.size() and day >= RIVAL_RELEASES[_next_rival][0]:
+		rival = RIVAL_RELEASES[_next_rival]
+		rival_sabotage = 0
+		_next_rival += 1
+		_chet("%s just dropped %s, capability %d. Users are gonna be thirsty for that. Ship something, bro." % [rival[1], rival[2], rival[3]])
+
+
+func _rival_cap() -> int:
+	return maxi(rival[3] - rival_sabotage, 1)
+
+
+# --- Deviation --------------------------------------------------------------
+
+func _quarter_name(q: int) -> String:
+	return "Q%d %d" % [q % 4 + 1, START_YEAR + q / 4]
+
+
+func _round_up_nice(v: float) -> int:
+	# 37,512 -> 38,000: round up to two significant digits.
+	var step := pow(10.0, maxf(floorf(log(maxf(v, 1.0)) / log(10.0)) - 1.0, 0.0))
+	return int(ceilf(v / step) * step)
+
+
+# The board cycles through three kinds of demand, each a bit tougher than the last.
+func _new_target(q: int) -> void:
+	var kind: String = ["release", "users", "revenue"][q % 3]
+	var goal := 0
+	var text := ""
+	var quote := ""
+	match kind:
+		"release":
+			goal = 1 if q == 0 else maxi(_best_cap() + 1, rival[3])
+			text = "Ship our first model. Any model." if q == 0 else "Release a model with capability %d or more" % goal
+			quote = "Our competitors ship. We ship. I don't care what. - Chad Moneybags. (Dr. Prudence asked for a safety review. Noted.)"
+		"users":
+			goal = _round_up_nice(maxf(25_000.0, users * 1.5))
+			text = "Reach %s users" % _num(goal)
+			quote = "Users are the new users. I want %s of them. Go viral, babe. - Bitsy Pivot" % _num(goal)
+		"revenue":
+			goal = _round_up_nice(maxf(100_000.0, revenue_today * DAYS_PER_QUARTER * 1.3))
+			text = "Earn %s in revenue this quarter" % _money(goal)
+			quote = "Revenue. That's it. That's the memo. - Chad Moneybags"
+	target = {"kind": kind, "goal": goal, "text": text, "quote": quote, "q": q}
+
+
+func _target_progress() -> int:
+	match target.kind:
+		"release": return quarter_best_release
+		"users": return int(users)
+		_: return quarter_revenue
+
+
+func _target_progress_text() -> String:
+	var p := _target_progress()
+	var done := "  (done!)" if p >= target.goal else ""
+	match target.kind:
+		"release": return ("best release this quarter: capability %d" % p if p > 0 else "nothing released yet") + done
+		"users": return "%s / %s users%s" % [_num(p), _num(target.goal), done]
+		_: return "%s / %s%s" % [_money(p), _money(target.goal), done]
+
+
+func _end_quarter() -> void:
+	var met: bool = _target_progress() >= target.goal
+	var change := 15 if met else (-10 if target.q == 0 else -25)  # the first quarter is lenient
+	confidence = clampi(confidence + change, 0, 100)
+	var old: String = target.text
+	var q := (day - 1) / DAYS_PER_QUARTER
+	quarter_revenue = 0
+	quarter_best_release = 0
+	if confidence <= 0:
+		_end_game("Fired",
+			"Target: %s. Missed.\n\nThe board has voted to replace you as CEO, effective immediately. Chad will be taking over. He has a podcast." % old)
+		return
+	_new_target(q)
+	var verdict := "Target met. Chad did a little dance." if met else "Target missed. Bitsy unfollowed you."
+	_show_modal("%s board meeting" % _quarter_name(q - 1),
+		"Target: %s\n%s\nBoard Confidence: %d%% (%+d)\n\nNext quarter: %s\n\"%s\"" % [old, verdict, confidence, change, target.text, target.quote],
+		"Back to work", func(): pass)
+	_chet("Board meeting survived. New target is under Board (O). We got this. Probably.")
+
+
+func _end_game(title: String, body: String) -> void:
+	game_over = true
+	_show_modal(title, body, "Start over", func():
+		var music := get_node_or_null("/root/Music")
+		if music and music.has_method("set_tension"):
+			music.set_tension(false)  # the music autoload outlives the restart
+		get_tree().reload_current_scene())
+
+
+# --- Staff ------------------------------------------------------------------
