@@ -132,14 +132,24 @@ func _tick_wear() -> void:
 		_chet("%d rack%s held together with zip ties. Put engineers at a Workstation near them, bro." % [worn, "" if worn == 1 else "s"])
 
 
-# Compute is spent in this order: red-team rigs, then whatever the AI hides at 75%, then training.
+# Compute is spent in this order: red-team rigs, users, then whatever the AI hides at 75%, then training.
 func _redteam_compute() -> float:
 	var rigs := objects.keys().filter(func(r): return objects[r] == "redteam" and _powered(r)).size()
 	return minf(rigs * REDTEAM_COMPUTE, _compute_per_day())
 
 
+# Users eat compute every day. They take up to USER_COMPUTE_CAP of what's left after the rigs.
+func _user_compute_demand() -> float:
+	return users / USERS_PER_COMPUTE
+
+
+func _user_compute() -> float:
+	var free := maxf(_compute_per_day() - _redteam_compute(), 0.0)
+	return minf(_user_compute_demand(), free * USER_COMPUTE_CAP)
+
+
 func _training_compute() -> float:
-	var c := _compute_per_day() - _redteam_compute()
+	var c := _compute_per_day() - _redteam_compute() - _user_compute()
 	if deviation >= 75.0:
 		c -= _compute_per_day() * HIDDEN_COMPUTE
 	return maxf(c, 0.0)
@@ -166,7 +176,11 @@ func _can_train(cap: int) -> bool:
 # Share of users the best model can serve: all of them with enough compute, fewer without.
 func _serve_ratio() -> float:
 	var need := _compute_needed(_best_cap())
-	return 1.0 if need <= 0.0 else clampf(_compute_per_day() / need, 0.0, 1.0)
+	var r := 1.0 if need <= 0.0 else clampf(_compute_per_day() / need, 0.0, 1.0)
+	var demand := _user_compute_demand()  # users who don't get their share of compute drift away
+	if demand > 0.0:
+		r *= clampf(_user_compute() / demand, 0.0, 1.0)
+	return r
 
 
 func _best_cap() -> int:
