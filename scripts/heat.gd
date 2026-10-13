@@ -47,7 +47,7 @@ func _tick_heat() -> void:
 	var rack_heat := RACK_HEAT * (1.0 + _research_bonus("rack_heat"))
 	for t in objects:
 		if RACKS.has(objects[t]) and _indoor(t) and _powered(t) and not racks_off.has(t):
-			_set_temp(t, _temp(t) + rack_heat * RACKS[objects[t]].heat)
+			_set_temp(t, _temp(t) + rack_heat * RACKS[objects[t]].heat * (SUBMERGED_HEAT if racks_submerged.has(t) else 1.0))
 	for s in staff:  # people are warm, too
 		var at := Vector2i((s.pos / TILE).floor())
 		if _indoor(at):

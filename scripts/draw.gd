@@ -223,6 +223,13 @@ func _draw_rack(p: Vector2, t: Vector2i) -> void:
 		var col := Color(0.4, 0.9, 0.4) if cond >= 75.0 else (Color(1.0, 0.65, 0.2) if cond >= 50.0 else Color(1.0, 0.3, 0.25))
 		draw_rect(Rect2(p + Vector2(4, 3 - h), Vector2(24, 3)), Color(0, 0, 0, 0.5))
 		draw_rect(Rect2(p + Vector2(4, 3 - h), Vector2(24.0 * cond / 100.0, 3)), col)
+	if racks_submerged.has(t):  # Submerged Cooling: a glass tank of blue coolant around the rack
+		draw_rect(Rect2(p + Vector2(2, 14 - h), Vector2(28, 18 + h)), Color(0.3, 0.7, 1.0, 0.28))
+		draw_rect(Rect2(p + Vector2(2, 14 - h), Vector2(28, 18 + h)), Color(0.6, 0.85, 1.0, 0.8), false, 1.0)
+		var bub := int(_time * 3.0)
+		for i in 3:
+			var by := 26.0 - fmod(_time * 8.0 + i * 7.0, 18.0 + h)
+			draw_circle(p + Vector2(8 + i * 8, by), 1.2, Color(0.85, 0.95, 1.0, 0.8))
 	if racks_off.has(t):  # switched off: dimmed, with a red power symbol on top
 		draw_rect(Rect2(p + Vector2(4, 8 - h), Vector2(24, 22 + h)), Color(0, 0, 0, 0.35))
 		var c := p + Vector2(16, 20 - h)  # on the top face, so a rack in front can't hide it

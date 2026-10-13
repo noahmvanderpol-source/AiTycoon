@@ -66,6 +66,10 @@ const RACKS := {
 	"rack_improved": {"compute": 2.0, "heat": 2.5, "power": 2.5},
 	"rack_advanced": {"compute": 4.0, "heat": 6.0, "power": 6.0},
 }
+const RACK_TIERS := ["rack", "rack_improved", "rack_advanced"]
+# Submerged Cooling: a rack upgrade (from the Immersion Cooling research) that sinks it in coolant.
+const SUBMERGED_COST := 60000
+const SUBMERGED_HEAT := 0.25  # a submerged rack gives off this share of its heat
 const HEAT_SPREAD := 0.2  # share of the difference that flows to each open neighbour per pass
 const HEAT_PASSES := 4  # spreading passes per step, so heat crosses a room in days, not months
 const WALL_CONDUCT := 0.004  # flow through a wall per pass, before insulation
@@ -182,7 +186,7 @@ const ENG_RACK_BONUS := 0.5
 # Wear and tear: every rack has a 0-100 condition that scales its output. Racks nobody maintains lose
 # RACK_WEAR a day, down to RACK_MIN_COND. Each engineer at a workstation maintains up to
 # ENG_MAINT_RACKS racks in its radius, restoring RACK_REPAIR a day.
-const RACK_WEAR := 0.5
+const RACK_WEAR := 0.25
 const RACK_REPAIR := 5.0
 const RACK_MIN_COND := 25.0
 const ENG_MAINT_RACKS := 4
@@ -348,8 +352,8 @@ const RESEARCH := [
 		"desc": "Unlocks the Portable Power Plant."},
 	{"id": "smartgrid", "branch": "equipment", "req": ["lithium"], "lane": 1, "name": "Smart Power", "cost": 380, "rack_power": -0.1,
 		"desc": "Racks use 10% less power. A dashboard tells them to."},
-	{"id": "immersion", "branch": "equipment", "req": ["turbines", "liquid"], "name": "Immersion Cooling", "cost": 650, "cooling": 0.3, "rack_heat": -0.15,
-		"desc": "Coolers 30% stronger, racks give off 15% less heat. The servers live in a hot tub now."},
+	{"id": "immersion", "branch": "equipment", "req": ["turbines", "liquid"], "name": "Immersion Cooling", "cost": 650, "unlocks": ["rack_submerged"], "cooling": 0.3, "rack_heat": -0.15,
+		"desc": "Unlocks Submerged Cooling for racks (click a rack). Coolers 30% stronger, racks give off 15% less heat. The servers live in a hot tub now."},
 	# Computer Chips
 	{"id": "overclock", "branch": "chips", "name": "Overclocking", "cost": 40, "unlocks": ["redteam"], "compute": 0.15,
 		"rack_heat": 0.1, "con": "+10% rack heat",
@@ -536,6 +540,8 @@ var revenue_label: Label
 var warn_banner: Label
 var smog := PackedFloat32Array()  # pollution per tile, 0-100, GRID_W * GRID_H
 var research_done := {}  # research id -> true
+var racks_submerged := {}  # Vector2i -> true for racks upgraded with Submerged Cooling
+var rack_panel: PanelContainer  # the options panel you get by clicking a rack
 var research_active := ""  # what the research points go towards
 var research_points := 0.0  # banked, spent when the active node is paid off
 var research_page: Control  # full-screen research tree

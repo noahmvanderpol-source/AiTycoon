@@ -48,9 +48,11 @@ func _describe_hover() -> String:
 				if rack_names.has(t) and deviation >= 25.0:
 					lines[0] += ' "%s"' % rack_names[t]
 				if racks_off.has(t):
-					lines.append("Disabled. Click it with Build closed to turn it on.")
+					lines.append("Shut down. Click it (Build closed) for options.")
 				else:
-					lines.append("Output: %d%%   (click with Build closed to turn off)" % int(_rack_output(t) * 100.0))
+					lines.append("Output: %d%%   (click with Build closed for options)" % int(_rack_output(t) * 100.0))
+				if racks_submerged.has(anchor):
+					lines.append("Submerged Cooling: gives off %d%% of its heat" % int(SUBMERGED_HEAT * 100.0))
 				lines.append("Condition: %d%%%s" % [int(_rack_cond(t)), "" if _maintained_racks().has(t) else " (no engineer)"])
 			if GENERATORS.has(id):
 				lines.append("Condition: %d%%%s" % [int(_gen_cond(anchor)), "" if _maintained_gens().has(anchor) else " (no mechanic)"])

@@ -38,6 +38,80 @@ func _toggle_rack(t: Vector2i) -> void:
 		racks_off[t] = true
 
 
+# --- Rack options panel: click a rack (Build closed) to shut it down or upgrade it ---
+
+func _open_rack_panel(t: Vector2i) -> void:
+	_close_rack_panel()
+	var id: String = objects.get(t, "")
+	if not RACKS.has(id):
+		return
+	rack_panel = PanelContainer.new()
+	rack_panel.add_theme_stylebox_override("panel", _panel_style(0.95))
+	rack_panel.position = get_viewport().get_mouse_position() + Vector2(16, -40)
+	var box := VBoxContainer.new()
+	rack_panel.add_child(box)
+	var title := Label.new()
+	title.text = "%s%s" % [_tool_by_id(id).get("name", "Server Rack"), "  (submerged)" if racks_submerged.has(t) else ""]
+	box.add_child(title)
+	_rack_button(box, "Turn on" if racks_off.has(t) else "Shut down", "", func(): _toggle_rack(t))
+	var i := RACK_TIERS.find(id)
+	for j in range(i + 1, RACK_TIERS.size()):
+		var up: String = RACK_TIERS[j]
+		var cost := _rack_upgrade_cost(id, up)
+		var why := "Needs research" if _locked(up) else ("Can't afford" if cost > money else "")
+		_rack_button(box, "Upgrade to %s  %s" % [_tool_by_id(up).name.replace(" Server Rack", ""), _money(cost)], why,
+			func(): _upgrade_rack(t, up, cost))
+	if not racks_submerged.has(t):
+		var why := "Needs Immersion Cooling research" if _locked("rack_submerged") else ("Can't afford" if SUBMERGED_COST > money else "")
+		_rack_button(box, "Submerged Cooling  %s  (-%d%% heat)" % [_money(SUBMERGED_COST), int((1.0 - SUBMERGED_HEAT) * 100.0)], why,
+			func(): _submerge_rack(t))
+	_rack_button(box, "Close", "", func(): pass)
+	ui_layer.add_child(rack_panel)
+	# keep it on screen
+	await get_tree().process_frame
+	if is_instance_valid(rack_panel):
+		var vp := get_viewport().get_visible_rect().size
+		rack_panel.position = rack_panel.position.clamp(Vector2(8, 60), vp - rack_panel.size - Vector2(8, 90))
+
+
+func _rack_button(box: VBoxContainer, text: String, why: String, action: Callable) -> void:
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.text = text if why == "" else "%s  (%s)" % [text, why]
+	b.disabled = why != ""
+	b.pressed.connect(func():
+		action.call()
+		_close_rack_panel())
+	box.add_child(b)
+
+
+func _close_rack_panel() -> void:
+	if is_instance_valid(rack_panel):
+		rack_panel.queue_free()
+	rack_panel = null
+
+
+# An upgrade costs the difference between the two tiers' prices.
+func _rack_upgrade_cost(from: String, to: String) -> int:
+	return maxi(_tool_cost(_tool_by_id(to)) - _tool_cost(_tool_by_id(from)), 0)
+
+
+func _upgrade_rack(t: Vector2i, to: String, cost: int) -> void:
+	if cost > money or _locked(to) or not RACKS.has(objects.get(t, "")):
+		return
+	money -= cost
+	objects[t] = to
+	rack_cond.erase(t)  # new hardware
+	_after_build()
+
+
+func _submerge_rack(t: Vector2i) -> void:
+	if SUBMERGED_COST > money or _locked("rack_submerged") or not RACKS.has(objects.get(t, "")):
+		return
+	money -= SUBMERGED_COST
+	racks_submerged[t] = true
+
+
 func _racks() -> int:
 	var n := 0
 	for t in objects:
@@ -144,6 +218,9 @@ func _tick_wear() -> void:
 	for t in racks_off.keys():
 		if not RACKS.has(objects.get(t, "")):
 			racks_off.erase(t)
+	for t in racks_submerged.keys():
+		if not RACKS.has(objects.get(t, "")):
+			racks_submerged.erase(t)
 	if worn > 0 and day % 15 == 0:
 		_chet("%d rack%s held together with zip ties. Put engineers at a Workstation near them, bro." % [worn, "" if worn == 1 else "s"])
 

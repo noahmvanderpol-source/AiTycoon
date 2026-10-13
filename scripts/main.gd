@@ -170,8 +170,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and event.pressed:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
+				_close_rack_panel()  # a click anywhere on the map closes the rack options
 				if not build_row.visible and RACKS.has(objects.get(hover, "")):
-					_toggle_rack(hover)  # click a rack to switch it off or on
+					_open_rack_panel(hover)  # click a rack for its options: on/off, upgrades
 				elif build_row.visible and _in_bounds(hover):
 					if not held.is_empty():
 						_drop_held()
