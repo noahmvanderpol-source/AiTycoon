@@ -3,7 +3,8 @@ extends "res://scripts/deviation.gd"
 
 func _walkable(t: Vector2i) -> bool:
 	var door: bool = wall_tiles.get(t) == "door"
-	if _subs_in(t).any(func(c): return sub_objects[c] == "iwall"):
+	var subs := _subs_in(t)  # a partition blocks the tile, unless an Interior Door is set into it
+	if subs.any(func(c): return sub_objects[c] == "iwall") and not subs.any(func(c): return sub_objects[c] == "idoor"):
 		return false
 	return (floor_tiles.has(t) or door) and (door or not wall_tiles.has(t)) and not objects.has(t)
 
@@ -17,6 +18,7 @@ func _refresh_walkable() -> void:
 func _after_build() -> void:
 	_refresh_walkable()
 	_find_buildings()
+	_rebuild_pipe_net()
 	_refresh_access()
 	for s in staff:
 		s.path = PackedVector2Array()
@@ -81,7 +83,8 @@ func _hire(role: String) -> void:
 	_chet(["Got us a researcher. PhD in something. Didn't read the thesis. Vibes were right.",
 		"New engineer. Says she can make the racks go brrr. I believe her.",
 		"Hired a marketer. He's already called our model 'basically sentient'. Legally risky, emotionally correct.",
-		"Alignment Researcher onboarded. Her first question was 'where's the off switch'. Bro, there isn't one. Was there supposed to be?"][ROLES.keys().find(role)])
+		"Alignment Researcher onboarded. Her first question was 'where's the off switch'. Bro, there isn't one. Was there supposed to be?",
+		"Mechanic hired. Show them the generators, set them to Maintenance, give them gravel to stand on, then stay out of the way."][ROLES.keys().find(role)])
 
 
 func _fire(s: Dictionary) -> void:
@@ -110,6 +113,8 @@ func _workforce(job: String) -> float:
 
 # Every desk tier is a "desk" as far as jobs go.
 func _station_kind(id: String) -> String:
+	if GENERATORS.has(id):
+		return "generator"  # Maintenance mechanics work next to any generator
 	return "desk" if DESKS.has(id) else id
 
 

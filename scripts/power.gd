@@ -16,6 +16,8 @@ func _machines() -> Array:
 		out.append([Vector3i(c[0].x, c[0].y, c[2]), COOLERS[c[1]].power * (1.0 + _research_bonus("cooler_power"))])
 	for t in objects:
 		if RACKS.has(objects[t]):
+			if racks_off.has(t):
+				continue
 			out.append([Vector3i(t.x, t.y, 0), RACKS[objects[t]].power * RACK_KW * (1.0 + _research_bonus("rack_power"))])
 		elif objects[t] == "redteam":
 			out.append([Vector3i(t.x, t.y, 0), REDTEAM_KW])
@@ -34,10 +36,10 @@ func _tick_power() -> void:
 	var solar: float = roof_objects.values().count("solar") * SOLAR_KW
 	for t in objects:
 		if SOLAR_ARRAYS.has(objects[t]):
-			solar += SOLAR_ARRAYS[objects[t]].kw
+			solar += SOLAR_ARRAYS[objects[t]].kw * _solar_smog_factor(t)
 	for t in roof_objects:
 		if SOLAR_ARRAYS.has(roof_objects[t]):
-			solar += SOLAR_ARRAYS[roof_objects[t]].kw
+			solar += SOLAR_ARRAYS[roof_objects[t]].kw * _solar_smog_factor(t)
 	solar *= SUN[_power_step]
 	var used_solar := minf(solar, need)
 	need -= used_solar
@@ -61,7 +63,8 @@ func _tick_power() -> void:
 	var made := 0.0
 	for t in gens:
 		var g: Dictionary = GENERATORS[objects[t]]
-		var out := minf(need, g.kw)
+		var out := minf(need, g.kw * _gen_cond(t) / 100.0)  # a worn generator can't make its full rating
+		_wear_gen(t, out / g.kw)
 		need -= out
 		made += out
 		gen_output[t] = out
@@ -118,6 +121,11 @@ func _pollution() -> int:
 	for v in smog:
 		worst = maxf(worst, v)
 	return int(worst)
+
+
+# Smog dims the sun: 1.0 in clean air, down to 1 - SOLAR_SMOG_LOSS under the thickest smog.
+func _solar_smog_factor(t: Vector2i) -> float:
+	return 1.0 - SOLAR_SMOG_LOSS * _smog_at(t) / 100.0
 
 
 func _smog_at(t: Vector2i) -> float:

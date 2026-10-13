@@ -1,12 +1,14 @@
 extends "res://scripts/hover.gd"
 ## Research page. Part of the Main script chain (see scripts/README.md).
 
-# Research tree layout: the startup at the left, one row per branch, tiers left to right.
+# Research tree layout: the garage at the bottom, each branch grows upward in two lanes.
+# The tree is bigger than the screen, so it sits in a scroll box you can drag around.
 const RT_NODE := Vector2(215, 72)
-const RT_COL := 245.0  # distance between tiers
-const RT_ROW := 118.0  # distance between branches
-const RT_LEFT := 200.0  # where the first tier starts, after the root
-const RT_TOP := 26.0  # room for the branch name above each row
+const RT_COL := 235.0  # distance between lanes
+const RT_ROW := 112.0  # distance between rows
+const RT_BRANCH := 2 * RT_COL + 50.0  # width of one branch, two lanes and a gap
+const RT_PAD := 30.0  # margin round the tree
+const RT_ROOT_H := 140.0  # room under the bottom row for the branch names and the garage
 
 
 func _build_research_page() -> void:
@@ -46,34 +48,37 @@ func _build_research_page() -> void:
 	fill.bg_color = Color(1.0, 0.8, 0.35)
 	research_bar.add_theme_stylebox_override("fill", fill)
 	col.add_child(research_bar)
-	var center := CenterContainer.new()
-	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	col.add_child(center)
-	var tiers := 0
-	for br in RESEARCH_BRANCHES:
-		tiers = maxi(tiers, RESEARCH.filter(func(r): return r.branch == br.id).size())
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_child(scroll)
+	research_scroll = scroll
 	var tree := Control.new()
-	tree.custom_minimum_size = Vector2(RT_LEFT + (tiers - 1) * RT_COL + RT_NODE.x,
-		RT_TOP + (RESEARCH_BRANCHES.size() - 1) * RT_ROW + RT_NODE.y)
+	tree.custom_minimum_size = _rt_size()
 	tree.draw.connect(_draw_research_lines)
-	center.add_child(tree)
+	tree.gui_input.connect(_research_drag)
+	scroll.add_child(tree)
 	research_tree = tree
 	var root := Label.new()
-	root.text = "Garage\nStartup"
+	root.text = "Garage Startup"
 	root.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	root.size = Vector2(130, RT_NODE.y)
-	root.position = Vector2(0, _rt_root_y() - RT_NODE.y / 2.0)
+	root.size = Vector2(200, 44)
+	root.position = _rt_root() - Vector2(100, 0)
 	var rs := _panel_style(1.0)
 	rs.bg_color = Color(0.2, 0.18, 0.15)
 	root.add_theme_stylebox_override("normal", rs)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tree.add_child(root)
 	for i in RESEARCH_BRANCHES.size():
 		var br: Dictionary = RESEARCH_BRANCHES[i]
 		var h := Label.new()
 		h.text = br.name
+		h.add_theme_font_size_override("font_size", 18)
 		h.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5))
-		h.position = Vector2(RT_LEFT, i * RT_ROW)
+		h.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		h.size = Vector2(RT_BRANCH - 50.0, 24)
+		h.position = Vector2(RT_PAD + i * RT_BRANCH, _rt_size().y - RT_ROOT_H + 4)
+		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		tree.add_child(h)
 		for r in RESEARCH:
 			if r.branch != br.id:
@@ -105,19 +110,51 @@ func _build_research_page() -> void:
 				b.add_child(con)
 
 
-# Top-left corner of a node: its branch picks the row, its place in the branch picks the tier.
+# Row of a node, counted up from the bottom: one above the deepest thing it needs.
+func _rt_tier(r: Dictionary) -> int:
+	var t := 0
+	for id in r.get("req", []):
+		t = maxi(t, _rt_tier(_research_by_id(id)) + 1)
+	return t
+
+
+func _rt_tiers() -> int:
+	var n := 0
+	for r in RESEARCH:
+		n = maxi(n, _rt_tier(r) + 1)
+	return n
+
+
+func _rt_size() -> Vector2:
+	return Vector2(RT_PAD * 2 + RESEARCH_BRANCHES.size() * RT_BRANCH - 50.0,
+		RT_PAD + (_rt_tiers() - 1) * RT_ROW + RT_NODE.y + RT_ROOT_H)
+
+
+# Top-left corner of a node: its branch and lane pick the column, its tier the row (bottom up).
 func _rt_node_pos(r: Dictionary) -> Vector2:
-	var row := RESEARCH_BRANCHES.map(func(b): return b.id).find(r.branch)
-	var tier := RESEARCH.filter(func(x): return x.branch == r.branch).find(r)
-	return Vector2(RT_LEFT + tier * RT_COL, RT_TOP + row * RT_ROW)
+	var bi := RESEARCH_BRANCHES.map(func(b): return b.id).find(r.branch)
+	var x: float = RT_PAD + bi * RT_BRANCH + r.get("lane", 0) * RT_COL
+	var y := _rt_size().y - RT_ROOT_H - RT_NODE.y - _rt_tier(r) * RT_ROW
+	return Vector2(x, y)
 
 
-func _rt_root_y() -> float:
-	return RT_TOP + (RESEARCH_BRANCHES.size() - 1) * RT_ROW / 2.0 + RT_NODE.y / 2.0
+# Top middle of the garage box.
+func _rt_root() -> Vector2:
+	return Vector2(_rt_size().x / 2.0, _rt_size().y - RT_ROOT_H + 60.0)
+
+
+# Drag the tree around with the left or middle mouse button; the wheel scrolls it up and down.
+func _research_drag(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and event.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_MIDDLE):
+		research_scroll.scroll_horizontal -= int(event.relative.x)
+		research_scroll.scroll_vertical -= int(event.relative.y)
 
 
 # Little code-drawn icons, 32x32, one per research node.
 func _draw_research_icon(c: Control, id: String) -> void:
+	id = {"interiors": "prefab", "raised": "insulation", "hyperscale": "modular", "liquid": "hvac", "smartgrid": "lithium",
+		"immersion": "hvac", "arxiv": "standups", "tensor": "silicon", "photonic": "lowpower", "quantum": "wafer",
+		"kombucha": "hustle", "equity": "snacks", "fourday": "pto"}.get(id, id)
 	var grey := Color(0.55, 0.55, 0.58)
 	var dark := Color(0.2, 0.2, 0.22)
 	var gold := Color(1.0, 0.8, 0.35)
@@ -206,24 +243,30 @@ func _draw_research_icon(c: Control, id: String) -> void:
 
 
 # Lines into each node: green once it's done, gold if it can be researched now, grey if not yet.
+# Branch starters hang off the garage; everything else comes up from what it needs.
 func _draw_research_lines() -> void:
-	var prev := {}  # branch -> right edge of the node before
 	for r in RESEARCH:
 		var p := _rt_node_pos(r)
-		var to := p + Vector2(0, RT_NODE.y / 2.0)
-		var from: Vector2 = prev.get(r.branch, Vector2(130, _rt_root_y()))
+		var to := p + Vector2(RT_NODE.x / 2.0, RT_NODE.y)
 		var col := Color(0.4, 0.8, 0.45) if research_done.has(r.id) else (Color(1.0, 0.8, 0.35) if _research_open(r) else Color(0.4, 0.4, 0.42))
-		if from.y == to.y:
-			research_tree.draw_line(from, to, col, 3.0)
-		else:  # elbow out of the root
-			var mid := (from.x + to.x) / 2.0
-			research_tree.draw_polyline(PackedVector2Array([from, Vector2(mid, from.y), Vector2(mid, to.y), to]), col, 3.0)
-		prev[r.branch] = p + Vector2(RT_NODE.x, RT_NODE.y / 2.0)
+		var froms := []
+		for id in r.get("req", []):
+			froms.append(_rt_node_pos(_research_by_id(id)) + Vector2(RT_NODE.x / 2.0, 0))
+		if froms.is_empty():
+			froms.append(_rt_root())
+		for from in froms:
+			var mid: float = (from.y + to.y) / 2.0 if froms.size() == 1 or from.x == to.x else to.y + 18.0
+			research_tree.draw_polyline(PackedVector2Array([from, Vector2(from.x, mid), Vector2(to.x, mid), to]), col, 3.0)
 
 
 func _update_research_tab() -> void:
 	if not research_page.visible:
 		return
+	if not research_scrolled:  # first look: the bottom of the tree, centred on the garage
+		research_scrolled = true
+		(func():
+			research_scroll.scroll_vertical = int(research_tree.custom_minimum_size.y)
+			research_scroll.scroll_horizontal = int((research_tree.custom_minimum_size.x - research_scroll.size.x) / 2.0)).call_deferred()
 	var active := _research_by_id(research_active)
 	if active.is_empty():
 		research_label.text = "+%.1f points a day     Banked: %d     Nothing picked" % [_research_per_day(), int(research_points)]
@@ -258,15 +301,12 @@ func _research_by_id(id: String) -> Dictionary:
 	return {}
 
 
-# A node opens once the one before it in its branch is done.
+# A node opens once everything in its "req" list is done.
 func _research_open(r: Dictionary) -> bool:
-	var prev := {}
-	for x in RESEARCH:
-		if x.id == r.id:
-			break
-		if x.branch == r.branch:
-			prev = x
-	return prev.is_empty() or research_done.has(prev.id)
+	for id in r.get("req", []):
+		if not research_done.has(id):
+			return false
+	return true
 
 
 func _pick_research(id: String) -> void:
@@ -278,7 +318,7 @@ func _pick_research(id: String) -> void:
 
 
 func _research_per_day() -> float:
-	return RESEARCH_BASE + RESEARCH_PER_WORKER * _workforce("research")
+	return (RESEARCH_BASE + RESEARCH_PER_WORKER * _workforce("research")) * (1.0 + _research_bonus("research_speed"))
 
 
 func _tick_research() -> void:
@@ -289,8 +329,8 @@ func _tick_research() -> void:
 	research_points -= r.cost
 	research_done[r.id] = true
 	research_active = ""
-	for x in RESEARCH:  # carry on down the same branch
-		if x.branch == r.branch and not research_done.has(x.id) and _research_open(x):
+	for x in RESEARCH:  # carry on up the same branch
+		if x.branch == r.branch and not research_done.has(x.id) and _research_open(x) and r.id in x.get("req", []):
 			research_active = x.id
 			break
 	var keep := tool_index

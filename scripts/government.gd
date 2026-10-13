@@ -26,7 +26,7 @@ const OFFICES := ["Governor", "Utilities Commissioner", "Water Board Chair", "St
 const LEGISLATURE := 3  # a whole body, not a person: no scandals, nobody resigns
 const LOBBY_FAVOR := 10.0  # a donation spread over 117 members goes less far
 const DEREG_SCRUTINY := 0.5  # AI-Friendly Regulation: Scrutiny rises at half speed
-const TAX_BREAK := 0.1  # Tech Tax Break: this share of the daily burn comes back
+const TAX_BREAK := 0.1  # Tech Tax Break: this share of the daily expenses comes back
 const PET_ISSUES := {
 	"jobs": "Jobs",
 	"clean_air": "Clean Air",
@@ -48,7 +48,7 @@ const ASKS := [
 	{"id": "dereg", "name": "AI-Friendly Regulation", "by": LEGISLATURE, "favor": 40, "cost": 0, "max": 1,
 		"desc": "Scrutiny rises half as fast"},
 	{"id": "tax", "name": "Tech Tax Break", "by": LEGISLATURE, "favor": 35, "cost": 0, "max": 1,
-		"desc": "10% of your daily burn back"},
+		"desc": "10% of your daily expenses back"},
 ]
 const PRICE_RISE := 0.25  # every price here goes up 25% a year, as politicians learn what we're worth
 const GRID_PER_PERMIT := 40.0

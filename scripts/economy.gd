@@ -13,6 +13,7 @@ func _new_day() -> void:
 	_tick_deviation()
 	gov.tick_day()
 	_tick_wear()
+	_tick_gen_repair()
 	if game_over:
 		return
 	if money < 0:
@@ -25,10 +26,22 @@ func _grid_kw() -> float:
 	return GRID_KW + gov.grid_bonus()
 
 
+# Racks that are switched on. A rack switched off makes no compute, heat, power draw, Deviation or wear.
+func _rack_on(t: Vector2i) -> bool:
+	return RACKS.has(objects.get(t, "")) and not racks_off.has(t)
+
+
+func _toggle_rack(t: Vector2i) -> void:
+	if racks_off.has(t):
+		racks_off.erase(t)
+	elif RACKS.has(objects.get(t, "")):
+		racks_off[t] = true
+
+
 func _racks() -> int:
 	var n := 0
 	for t in objects:
-		if RACKS.has(objects[t]):
+		if _rack_on(t):
 			n += 1
 	return n
 
@@ -37,7 +50,7 @@ func _racks() -> int:
 func _rack_max_compute() -> float:
 	var c := 0.0
 	for t in objects:
-		if RACKS.has(objects[t]):
+		if _rack_on(t):
 			c += RACKS[objects[t]].compute
 	return c
 
@@ -46,7 +59,7 @@ func _rack_max_compute() -> float:
 func _rack_sum(field: String) -> float:
 	var v := 0.0
 	for t in objects:
-		if RACKS.has(objects[t]):
+		if _rack_on(t):
 			v += RACKS[objects[t]][field]
 	return v
 
@@ -71,7 +84,7 @@ func _engineer_compute() -> float:
 			if s.working and s.job == "engineering" and s.seat == st:
 				crew += (1.0 if s.role == "engineer" else 0.5) * s.productivity
 		crew *= 1.0 + _research_bonus("productivity")
-		var racks := objects.keys().filter(func(r): return RACKS.has(objects[r]) and _in_eng_radius(st, r)).size()
+		var racks := objects.keys().filter(func(r): return _rack_on(r) and _in_eng_radius(st, r)).size()
 		total += ENG_RACK_BONUS * minf(crew, racks)
 	return minf(total, ENG_RACK_BONUS * _racks())
 
@@ -85,8 +98,8 @@ func _rack_compute() -> float:
 
 
 func _rack_output(t: Vector2i) -> float:
-	if not _reachable(t):
-		return 0.0  # nobody can get to it to keep it running
+	if not _reachable(t) or racks_off.has(t):
+		return 0.0  # switched off, or nobody can get to it to keep it running
 	return clampf(1.0 - (_temp(t) - RACK_SAFE_TEMP) * RACK_THROTTLE, RACK_MIN_OUTPUT, 1.0) * (0.0 if not _powered(t) else 1.0) \
 		* (1.0 + _research_bonus("compute")) * _rack_cond(t) / 100.0
 
@@ -107,7 +120,7 @@ func _maintained_racks() -> Dictionary:
 			if s.working and s.job == "engineering" and s.seat == st:
 				crew += (1.0 if s.role == "engineer" else 0.5) * s.productivity
 		var slots := int(ceilf(crew * ENG_MAINT_RACKS))
-		var near: Array = objects.keys().filter(func(r): return RACKS.has(objects[r]) and _in_eng_radius(st, r) and not done.has(r))
+		var near: Array = objects.keys().filter(func(r): return _rack_on(r) and _in_eng_radius(st, r) and not done.has(r))
 		near.sort_custom(func(a, b): return Vector2(a - st).length() < Vector2(b - st).length())
 		for r in near.slice(0, slots):
 			done[r] = true
@@ -118,7 +131,7 @@ func _tick_wear() -> void:
 	var fixed := _maintained_racks()
 	var worn := 0
 	for t in objects:
-		if not RACKS.has(objects[t]):
+		if not _rack_on(t):
 			continue
 		var c := _rack_cond(t)
 		c = minf(c + RACK_REPAIR, 100.0) if fixed.has(t) else maxf(c - RACK_WEAR, RACK_MIN_COND)
@@ -128,18 +141,111 @@ func _tick_wear() -> void:
 	for t in rack_cond.keys():  # forget racks that were demolished
 		if not RACKS.has(objects.get(t, "")):
 			rack_cond.erase(t)
+	for t in racks_off.keys():
+		if not RACKS.has(objects.get(t, "")):
+			racks_off.erase(t)
 	if worn > 0 and day % 15 == 0:
 		_chet("%d rack%s held together with zip ties. Put engineers at a Workstation near them, bro." % [worn, "" if worn == 1 else "s"])
 
 
-# Compute is spent in this order: red-team rigs, then whatever the AI hides at 75%, then training.
+func _gen_cond(t: Vector2i) -> float:
+	return gen_cond.get(t, 100.0)
+
+
+# Generators the mechanics get to today: each working Maintenance mechanic covers up to MECH_GENS
+# generators within MECH_RADIUS tiles of where they stand, nearest first.
+func _maintained_gens() -> Dictionary:
+	var done := {}
+	for s in staff:
+		if not s.working or s.job != "maintenance":
+			continue
+		var near: Array = objects.keys().filter(func(g): return GENERATORS.has(objects[g]) and not done.has(g) and Vector2(g - s.spot).length() <= MECH_RADIUS)
+		near.sort_custom(func(a, b): return Vector2(a - s.spot).length() < Vector2(b - s.spot).length())
+		for g in near.slice(0, ceili(MECH_GENS * s.productivity)):
+			done[g] = true
+	return done
+
+
+# Called every power step for a generator that ran at `load` (0-1) of its full rating.
+func _wear_gen(t: Vector2i, load: float) -> void:
+	if load > 0.0:
+		gen_cond[t] = maxf(_gen_cond(t) - GEN_WEAR / HEAT_STEPS_PER_DAY * (0.5 + 0.5 * load), GEN_MIN_COND)
+
+
+func _tick_gen_repair() -> void:
+	var fixed := _maintained_gens()
+	var worn := 0
+	for t in objects:
+		if not GENERATORS.has(objects[t]):
+			continue
+		if fixed.has(t):
+			gen_cond[t] = minf(_gen_cond(t) + GEN_REPAIR, 100.0)
+		if _gen_cond(t) < 60.0:
+			worn += 1
+	for t in gen_cond.keys():  # forget generators that were demolished
+		if not GENERATORS.has(objects.get(t, "")):
+			gen_cond.erase(t)
+	if worn > 0 and day % 15 == 0:
+		_chet("%d generator%s running on prayers and duct tape. Hire a Mechanic and put them on Maintenance, bro." % [worn, "" if worn == 1 else "s"])
+
+
+# The Expenses hover in the top bar: where the money goes each day.
+func _expenses_text() -> String:
+	var lines := ["Expenses per day: %s" % _money(_daily_burn()), ""]
+	var by_role := {}
+	var saved := 0
+	for s in staff:
+		var r: Array = by_role.get(s.role, [0, 0])
+		r[0] += 1
+		r[1] += _pay(s)
+		by_role[s.role] = r
+		saved += s.salary - _pay(s)
+	lines.append("Payroll: %s" % _money(_payroll()))
+	if staff.is_empty():
+		lines.append("  nobody on the payroll")
+	for role in ROLES:
+		if by_role.has(role):
+			lines.append("  %d x %s: %s" % [by_role[role][0], ROLES[role].name, _money(by_role[role][1])])
+	if saved > 0:
+		lines.append("  Slacking off pays %d%%, saving %s" % [int(SLACK_PAY * 100.0), _money(saved)])
+	lines.append("Power and fuel: %s (yesterday's bill)" % _money(power_bill))
+	return "\n".join(lines)
+
+
+# The Revenue hover in the top bar: where the money comes from each day.
+func _revenue_text() -> String:
+	if models.is_empty():
+		return "Revenue per day: $0\n\nPre-revenue. Train and release a model, then users show up and pay."
+	var bonus := _research_bonus("revenue")
+	var lines := ["Revenue per day: %s" % _money(revenue_today), "",
+		"%s users x $%.3f each = %s" % [_num(int(users)), REVENUE_PER_USER, _money(int(users * REVENUE_PER_USER))]]
+	if absf(bonus) > 0.001:
+		lines.append("Research: %+d%% revenue" % int(bonus * 100.0))
+	if gov != null and gov.contract_days > 0:
+		lines.append("")
+		lines.append("Not counted above:")
+		lines.append("  State AI Contract: +%s a day" % _money(gov.CONTRACT_PER_DAY))
+	return "\n".join(lines)
+
+
+# Compute is spent in this order: red-team rigs, users, then whatever the AI hides at 75%, then training.
 func _redteam_compute() -> float:
 	var rigs := objects.keys().filter(func(r): return objects[r] == "redteam" and _powered(r)).size()
 	return minf(rigs * REDTEAM_COMPUTE, _compute_per_day())
 
 
+# Users eat compute every day. They take up to USER_COMPUTE_CAP of what's left after the rigs.
+func _user_compute_demand() -> float:
+	return users / USERS_PER_COMPUTE
+
+
+func _user_compute() -> float:
+	var free := maxf(_compute_per_day() - _redteam_compute(), 0.0)
+	return minf(_user_compute_demand(), free * USER_COMPUTE_CAP)
+
+
 func _training_compute() -> float:
-	var c := _compute_per_day() - _redteam_compute()
+	var c := _compute_per_day() - _redteam_compute() - _user_compute()
 	if deviation >= 75.0:
 		c -= _compute_per_day() * HIDDEN_COMPUTE
 	return maxf(c, 0.0)
@@ -166,7 +272,11 @@ func _can_train(cap: int) -> bool:
 # Share of users the best model can serve: all of them with enough compute, fewer without.
 func _serve_ratio() -> float:
 	var need := _compute_needed(_best_cap())
-	return 1.0 if need <= 0.0 else clampf(_compute_per_day() / need, 0.0, 1.0)
+	var r := 1.0 if need <= 0.0 else clampf(_compute_per_day() / need, 0.0, 1.0)
+	var demand := _user_compute_demand()  # users who don't get their share of compute drift away
+	if demand > 0.0:
+		r *= clampf(_user_compute() / demand, 0.0, 1.0)
+	return r
 
 
 func _best_cap() -> int:
