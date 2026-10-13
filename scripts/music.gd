@@ -1,6 +1,8 @@
 extends Node
 ## Autoload "Music": shuffles through the soundtrack, with a mute button, volume slider and N hotkey.
-## Call Music.set_tension(true) when the Deviation meter gets scary to switch to the tense track.
+## Call Music.set_tension(true) when Deviation first gets scary and Music.tense_once() when it enters a worse band:
+## the tense track plays once, then the normal rotation resumes (with the tense track back every few songs while
+## things stay tense), so it never gets stuck.
 
 const CALM := [
 	"open_plan_build_mode", "hydration_station", "synergy", "lobbying_hours", "calizona_sunset",
@@ -13,6 +15,8 @@ var player := AudioStreamPlayer.new()
 var queue: Array = []
 var last := ""
 var tense := false
+var songs_since_tense := 0
+const TENSE_EVERY := 4  # while still tense, every 4th song is the tense track
 var muted := false
 var volume := 0.7  # 0..1, linear
 
@@ -35,7 +39,14 @@ func set_tension(on: bool) -> void:
 	if on == tense:
 		return
 	tense = on
-	_play_next()
+	if on:
+		tense_once()
+
+
+## Switch to the tense track now; when it ends the normal rotation carries on.
+func tense_once() -> void:
+	songs_since_tense = 0
+	_play(TENSION)
 
 
 func toggle_mute() -> void:
@@ -54,21 +65,28 @@ func _on_finished() -> void:
 
 
 func _play_next() -> void:
-	var track: String = TENSION
-	if not tense:
-		if queue.is_empty():
-			queue = CALM.duplicate()
-			queue.shuffle()
-			if queue[0] == last and queue.size() > 1:
-				queue.push_back(queue.pop_front())  # never repeat the track that just played
-		track = queue.pop_front()
+	if tense:
+		songs_since_tense += 1
+		if songs_since_tense >= TENSE_EVERY:
+			songs_since_tense = 0
+			_play(TENSION)
+			return
+	if queue.is_empty():
+		queue = CALM.duplicate()
+		queue.shuffle()
+		if queue[0] == last and queue.size() > 1:
+			queue.push_back(queue.pop_front())  # never repeat the track that just played
+	_play(queue.pop_front())
+
+
+func _play(track: String) -> void:
 	last = track
 	var stream = load("res://audio/%s.ogg" % track)
 	if stream == null:
 		push_warning("Music: missing track %s" % track)
 		return
 	if stream is AudioStreamOggVorbis:
-		stream.loop = tense  # tension music loops until things calm down
+		stream.loop = false
 	player.stream = stream
 	player.play()
 	if now_playing:

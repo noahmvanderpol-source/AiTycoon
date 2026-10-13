@@ -41,6 +41,10 @@ func _tick_deviation() -> void:
 	var level := int(deviation / 25.0)
 	if level > dev_level:
 		dev_level = level
+		if level >= 3:  # 75%: replay the tense track (50% is covered by tension switching on below)
+			var m := get_node_or_null("/root/Music")
+			if m and m.has_method("tense_once"):
+				m.tense_once()
 		_deviation_event(level)
 	elif dev_level > 0 and deviation < dev_level * 25.0 - 5.0:  # a little slack so it doesn't flicker
 		dev_level -= 1
